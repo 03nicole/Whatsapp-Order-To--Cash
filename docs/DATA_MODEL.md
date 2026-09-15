@@ -113,7 +113,7 @@ other.
 Two additive columns on `invoices` are anticipated but **not being added
 yet**: `order_id` (links an invoice back to the order that generated it —
 only meaningful once Phase 5 exists) and the tax/fiscalization fields
-described in [ARCHITECTURE.md](ARCHITECTURE.md#reference-peppol--en16931-europe).
+described in [ARCHITECTURE.md](ARCHITECTURE.md#peppol--en16931--eu-e-invoicing-standard).
 Called out here so the eventual migration is a known, planned one-liner
 (`ALTER TABLE invoices ADD COLUMN ...`) rather than a surprise.
 

@@ -57,7 +57,7 @@ building for a hypothetical, not a customer.
 ### Phase 10 — Live MoMo webhook integration *(validation-gated)*
 Replaces statement-upload reconciliation with the Daraja-style live
 callback pattern described in
-[ARCHITECTURE.md](ARCHITECTURE.md#reference-safaricom-daraja-api-m-pesa).
+[ARCHITECTURE.md](ARCHITECTURE.md#safaricom-daraja-api-m-pesa--kenya-mobile-money-integration).
 **Do not build before:** statement-upload reconciliation has demonstrably
 earned its keep with at least one paying/committed pilot — this was
 already the stated reasoning for deferring it before the order-to-cash

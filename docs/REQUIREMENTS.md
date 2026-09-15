@@ -62,7 +62,7 @@ isn't assumed, it's a thing to confirm per prospect).
 | Delivery assignment/tracking | Same — depends on order volume patterns not yet observed |
 | Multi-warehouse stock allocation | Only matters once a pilot actually runs >1 warehouse |
 | Owner-facing analytics dashboards | Needs a few months of real reconciled data to be worth building against |
-| Live MoMo webhook integration (replacing statement upload) | Statement-upload reconciliation has to first prove it's valuable enough to justify live API access & webhook infra (see [ARCHITECTURE.md](ARCHITECTURE.md#reference-safaricom-daraja-api-m-pesa)) |
+| Live MoMo webhook integration (replacing statement upload) | Statement-upload reconciliation has to first prove it's valuable enough to justify live API access & webhook infra (see [ARCHITECTURE.md](ARCHITECTURE.md#safaricom-daraja-api-m-pesa--kenya-mobile-money-integration)) |
 | ZRA Smart Invoice fiscalization | Not yet a blocker for any pilot customer; data model is kept compatible with it (see [DATA_MODEL.md](DATA_MODEL.md)) so it's additive later, not a migration |
 | PDF statement ingestion | Still no real sample file to build the parser against responsibly |
 
@@ -94,7 +94,7 @@ isn't assumed, it's a thing to confirm per prospect).
 - **NFR-2 (Auditability):** Every automated decision records which rule produced it (mirrors `match_rule` in the existing schema) so a human can always see *why* the system did what it did.
 - **NFR-3 (Connectivity tolerance):** Sales staff and customers may have patchy connectivity; WhatsApp message handling must be asynchronous/queue-tolerant, not require a live round-trip to complete.
 - **NFR-4 (Localization):** Zambian Kwacha formatting, MTN/Airtel phone-number normalization (already implemented in `matcher._normalize_phone`) extended consistently to the ordering flow.
-- **NFR-5 (Regulatory readiness):** The invoice data model carries the fields a fiscal/e-invoicing integration (ZRA Smart Invoice, or the PEPPOL/EN16931-style discipline it resembles) would need, even before that integration is built — see [ARCHITECTURE.md](ARCHITECTURE.md#reference-peppol--en16931-europe).
+- **NFR-5 (Regulatory readiness):** The invoice data model carries the fields a fiscal/e-invoicing integration (ZRA Smart Invoice, or the PEPPOL/EN16931-style discipline it resembles) would need, even before that integration is built — see [ARCHITECTURE.md](ARCHITECTURE.md#peppol--en16931--eu-e-invoicing-standard).
 
 ## 8. Core use cases
 
