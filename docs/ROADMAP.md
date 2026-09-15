@@ -1,9 +1,9 @@
 # Roadmap — WhatsApp Order-to-Cash for FMCG Distributors
 
 See [REQUIREMENTS.md](REQUIREMENTS.md) and [ARCHITECTURE.md](ARCHITECTURE.md)
-for the reasoning behind each phase. Phases 1–7, 9, 10, and 11 (transport
-layer only — see its own entry below) are **done and tested**; Phase 8 is
-scoped but not yet built. Each phase names its
+for the reasoning behind each phase. Phases 1–7, 9, 10, and 11 (including
+its order-confirmation wiring — see its own entries below) are **done
+and tested**; Phase 8 is scoped but not yet built. Each phase names its
 exit criteria — the point at which it's proven enough to justify starting
 the next one — because building ahead of validation is exactly the
 mistake this project has avoided so far (see the original README's own
@@ -26,7 +26,8 @@ happened once the CLI's core was proven and tested).
 | 9 | Owner analytics dashboard (`/analytics`) | Built entirely from numbers this tool already tracked and already treated as meaningful — the same outcome breakdown `report.py`'s Excel Summary sheet has shown since Phase 1, the same aging buckets the aging view already computes — not new invented metrics. Also built ahead of its own stated gate (see below). 16 new tests. Live verification against real accumulated demo data caught a genuine pre-existing bug in `_bucket()` (a negative days-outstanding fell through to the *worst* bucket instead of the best) — fixed, with a regression test |
 | 10 | Live MoMo webhook integration (`reconciler/flutterwave.py`, `/momo/webhook`) | Resolved the direct-MTN/Airtel-vs-aggregator decision in favor of Flutterwave (see [ARCHITECTURE.md](ARCHITECTURE.md#mobile-money-zambia--phase-10-built-decision-resolved) for the sourced reasoning) — one webhook covering both telcos, built and tested against Flutterwave's real public documentation (no live account exists). Feeds a single incoming payment straight into the same `reconcile()` the CLI/web UI call on a batch. Also built ahead of its own stated gate. 19 new tests. Live verification against a real accumulated open invoice caught a second timezone bug — `reconcile()` itself now normalizes both DataFrames' dates, not just `db.open_invoices()` |
 | 5b follow-up | WhatsApp Catalog feed export (`reconciler/catalog_feed.py`, `/catalog/feed.csv`) | Closes Phase 5b's retailer_id/product_id assumption automatically instead of leaving it a manual setup step — `id` in the feed is always this system's own `product_id`. Built against Meta's real documented product-feed spec (see [ARCHITECTURE.md](ARCHITECTURE.md#catalog-sync--phase-5b-follow-up-built) for the sourced field list and the scheduled-feed-vs-Batch-API decision). Exposed a real data-model gap — no `description`/`image_url` field existed anywhere — closed properly (nullable columns, optional CSV import columns, a `/catalog/edit` form) rather than faking placeholder values in the feed. Token-gated per business (HMAC of the business name). 17 new tests (231 total). Verified live: fetched the real feed URL shown on `/catalog` against the running server, confirmed correct fallbacks (description → name, image blank when unset) and that a wrong/missing/cross-business token is rejected. |
-| 11 | ZRA Smart Invoice fiscalization — transport layer (`reconciler/zra.py`) | Deliberately scoped, not a full integration — see the note below on why, and [ARCHITECTURE.md](ARCHITECTURE.md#zra-smart-invoice-fiscalization--phase-11-built-deliberately-scoped) for the sourced VSDC API details. Built the VSDC REST client (auth, device init, `saveSales` submission) and a real-shaped payload builder against a working open-source reference integration (no live ZRA sandbox exists). Two new required-not-defaulted product fields (`vat_category_code`, `item_class_code`) — fiscalizing an invoice containing a product missing either one is refused, not guessed. VAT math only computed for the one rate this module has a verified source for (16% standard) plus zero-rated/exempt (0% by definition); every other ZRA category code is refused outright rather than assumed. No live submission route or UI exists yet — nothing to point it at. 26 new tests. Verified live: the real migration ran cleanly against the already-populated live database, and the payload builder was driven against Sample Distributor Ltd's real catalog data end to end (refused correctly before a product's tax fields were set, built a correct payload after). |
+| 11 | ZRA Smart Invoice fiscalization — transport layer (`reconciler/zra.py`) | Deliberately scoped, not a full integration — see the note below on why, and [ARCHITECTURE.md](ARCHITECTURE.md#zra-smart-invoice-fiscalization--phase-11-built-deliberately-scoped) for the sourced VSDC API details. Built the VSDC REST client (auth, device init, `saveSales` submission) and a real-shaped payload builder against a working open-source reference integration (no live ZRA sandbox exists). Two new required-not-defaulted product fields (`vat_category_code`, `item_class_code`) — fiscalizing an invoice containing a product missing either one is refused, not guessed. VAT math only computed for the one rate this module has a verified source for (16% standard) plus zero-rated/exempt (0% by definition); every other ZRA category code is refused outright rather than assumed. 26 new tests. Verified live: the real migration ran cleanly against the already-populated live database, and the payload builder was driven against Sample Distributor Ltd's real catalog data end to end (refused correctly before a product's tax fields were set, built a correct payload after). |
+| 11 follow-up | Wiring fiscalization into order confirmation (`/fiscalization`) | Asked two scoped questions before building — when should it fire, and what happens on a ZRA rejection/outage — both answered with the recommended option: at order confirmation (VAT invoicing follows the sale, not the payment), and never block the order regardless of what ZRA does. `_finalize_order()` now calls a best-effort `_fiscalize_order()` right after a confirmed order's invoice is created, wrapped in one broad try/except so nothing about this integration can ever stop an order from confirming. New `/fiscalization` page: per-business ZRA settings form and a failed-submission review queue with one-click retry, the same pattern `/orders` already uses for flagged orders. 19 new tests (276 total). Verified live end to end: a real order against a product with no tax fields set confirmed normally while fiscalization correctly failed and surfaced on the review page; fixing the tax fields and retrying against a genuinely unreachable host produced a real DNS-resolution error, caught and recorded exactly as designed, without touching the order's confirmed status. |
 
 **Phases 7, 9, and 10 were built deliberately ahead of their own stated
 gates.** Unlike Phases 5–6 (framed from the start as low-risk extensions
@@ -72,17 +73,18 @@ end to end, and by dedicated tests in `test_orders_db.py`.
 Same caveat Phase 7 originally had and built past anyway — needs real order-volume and delivery-pattern
 data to design against, not assumptions.
 
-### Phase 11 follow-up — wiring fiscalization into a live submission flow
-The transport layer (see the Done table above) is built and tested, but
-nothing calls it yet: no route, no UI, no trigger on order confirmation
-or reconciliation. That's deliberate — building the trigger flow means
-deciding *when* an invoice gets fiscalized (at order time? at payment
-time?) and *what happens on a ZRA rejection*, neither of which has a
-real pilot customer's actual workflow to design against yet. Also still
+### Fiscalization: still not a real pilot's workflow, just a reasonable default
+Phase 11 and its follow-up (see the Done table above) are both built,
+but the trigger point and failure handling were decided from first
+principles (how VAT invoicing conventionally works, "never let a
+third-party API break the core flow"), not from a real pilot customer's
+actual compliance workflow — that still doesn't exist. Also still
 waiting on real per-product VAT category/item classification data,
 which only a business's own accountant or ZRA's `CodeData`/
 `ItemsClassInformation` reference endpoints can actually supply -
-correctly, this system still refuses to guess it.
+correctly, this system still refuses to guess it, which means
+fiscalization stays a no-op for every product until someone sets those
+two fields by hand.
 
 ## Validation gates
 
