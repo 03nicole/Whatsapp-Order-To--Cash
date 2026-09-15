@@ -223,7 +223,7 @@ sequenceDiagram
 | WhatsApp integration | Meta Cloud API direct, or a BSP (Twilio/360dialog/etc.) | Both are viable; see [§7](#7-external-api-strategy-in-detail) for the trade-off and why a short spike is worth doing before committing |
 | Async processing | Simple in-process queue initially; Celery/RQ only once webhook volume needs it | Matches principle 3 — don't build infrastructure ahead of the load that justifies it |
 | Order/invoice storage | Extends the existing SQLite schema in `db.py` (see [DATA_MODEL.md](DATA_MODEL.md)) | The reconciliation engine already reads/writes this database; new entities join it rather than living in a separate store |
-| Mobile money integration (Phase 10, deferred) | Direct MTN/Airtel Zambia APIs, or one aggregator (e.g. Flutterwave) | See [§7](#7-external-api-strategy-in-detail) — genuinely undecided until Phase 10 starts; named now so the shape (webhook-based, Daraja-style) is known ahead of time |
+| Mobile money integration (Phase 10) | Flutterwave, resolved over direct MTN/Airtel APIs | See [§7](#7-external-api-strategy-in-detail) — decided when Phase 10 actually started, not a default; `reconciler/flutterwave.py` |
 
 ## 6. Database strategy, in detail
 
@@ -295,21 +295,43 @@ this catalog's shape (FMCG SKUs, fixed pricing), it could cut a real
 chunk of Phase 5's custom "parse what the customer wants" scope — check
 this before writing a bespoke conversation-state machine.
 
-### Mobile money (Zambia) — for Phase 10, still deferred, named now so the shape is known ahead of time
+### Mobile money (Zambia) — Phase 10, built, decision resolved
+
+**Resolved 2026-09-15 in favor of Flutterwave (the aggregator path)**,
+when Phase 10 actually started — this was genuinely open until then,
+not a default. Two things tipped it, checked directly against each
+provider's public docs rather than assumed:
 
 - **MTN Mobile Money Open API (Zambia)** and **Airtel Money Open API
-  (Zambia)** — each expose a Collections API following the same
+  (Zambia)** each expose a Collections API following the same
   webhook-confirmation shape as Safaricom Daraja (see
-  [§2](#safaricom-daraja-api-m-pesa--kenya-mobile-money-integration)). Direct integration means
-  building and maintaining two callback handlers, two auth/signing
-  schemes.
-- **Alternative: a payment aggregator** that unifies multiple mobile
-  money rails behind one API (e.g. Flutterwave, which has supported
-  Zambian MTN/Airtel mobile money collections) — one integration instead
-  of two, at the cost of a per-transaction aggregator fee and another
-  vendor in the trust chain. Worth a genuine cost/time comparison against
-  direct telco integration when Phase 10 actually starts, not a default
-  either way.
+  [§2](#safaricom-daraja-api-m-pesa--kenya-mobile-money-integration)) -
+  but the public documentation found for MTN's webhook callback payload
+  was incomplete (general request-flow patterns, no full schema), and
+  direct integration means building and maintaining two separate
+  callback handlers and auth schemes, one per telco.
+- **Flutterwave** has an explicit, dedicated ["Zambia Mobile
+  Money"](https://developer.flutterwave.com/v3.0/docs/zambia-mobile-money)
+  page and a fully documented, stable webhook payload
+  (`event: "charge.completed"`, Zambia mobile money charges carry
+  `payment_type: "mobilemoneyzm"`) covering both MTN and Airtel
+  collections through one integration - at the cost of a per-transaction
+  aggregator fee and another vendor in the trust chain, which is worth
+  re-examining once real transaction-volume/fee data from an actual
+  pilot exists to compare against direct integration properly.
+
+Built in `reconciler/flutterwave.py` - webhook payload parsing
+(filtering to completed, Zambia-mobile-money charges only; other
+payment types/events on the same merchant account are ignored, not
+errored) and `verif-hash` signature verification (Flutterwave's stated
+authentication mechanism - a shared-secret header compare, not HMAC).
+`/momo/webhook?business=<name>` in `app.py` feeds a single incoming
+payment straight into the same `reconciler.matcher.reconcile()`
+function the CLI and web UI already call on a batch - exactly the
+architecture this section originally called for, not a parallel
+matching path. No live Flutterwave account exists - built and tested
+against Flutterwave's real public documentation, the same "prove it
+without live credentials first" pattern already used for WhatsApp.
 
 ## 8. Security & trust considerations
 

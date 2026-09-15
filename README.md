@@ -20,14 +20,17 @@ Phase 6, **stock management** (receive/correct stock for one product
 without re-importing the whole catalog, with a full audit trail — see
 "Order capture" below), Phase 7, **warehouse fulfillment tracking**
 (a picking list of confirmed orders, one "mark fulfilled" action — see
-"Warehouse" below), and Phase 9, **an analytics dashboard**
-(`/analytics` — built entirely from numbers this tool already tracked,
-see "Analytics" below). **Phases 7 and 9 were both built ahead of their
+"Warehouse" below), Phase 9, **an analytics dashboard** (`/analytics` —
+built entirely from numbers this tool already tracked, see "Analytics"
+below), and Phase 10, **live MoMo webhook integration** (`/momo/webhook`,
+`reconciler/flutterwave.py` — replaces statement-upload with a live
+Flutterwave callback for a single transaction at a time, straight into
+the same `reconcile()` the CLI/web UI call on a batch; see "Live MoMo
+webhooks" below). **Phases 7, 9, and 10 were all built ahead of their
 own validation gates, deliberately** — see [`docs/ROADMAP.md`](docs/ROADMAP.md)'s
 validation-gates section for exactly what that means and why it doesn't
-carry forward automatically to Phase 8, 10, or 11. Delivery, live MoMo
-webhooks, and fiscalization are still scoped but not yet built. Full
-system analysis:
+carry forward automatically to Phase 8 or 11. Delivery and fiscalization
+are still scoped but not yet built. Full system analysis:
 
 - [Requirements](docs/REQUIREMENTS.md) — problem statement, ICP, actors, functional/non-functional requirements, scope
 - [Architecture](docs/ARCHITECTURE.md) — component design, reference systems (Wasoko, Twiga Foods, Sukhiba, ChatCash, Safaricom Daraja/M-Pesa, EU PEPPOL/EN16931), tech stack decisions
@@ -227,6 +230,26 @@ data yet on what a sensible reorder point looks like per product. Built
 ahead of its own stated validation gate (see `docs/ROADMAP.md`) against
 whatever demo data exists today, not months of real reconciled data.
 
+### Live MoMo webhooks
+
+Phase 10: `/momo/webhook?business=<name>` replaces the statement-upload
+flow with a live callback for one transaction at a time, the instant it
+happens - built against **Flutterwave**, not a direct MTN/Airtel
+integration (see `docs/ARCHITECTURE.md` for the sourced reasoning: one
+well-documented, Zambia-confirmed webhook shape covering both telcos,
+versus two separately-maintained integrations with materially less
+complete public docs for either one). Every request must carry a
+correct `verif-hash` header matching `FLUTTERWAVE_SECRET_HASH` or it's
+rejected outright - nothing gets written to the database from an
+unverified request. A verified, completed Zambia-mobile-money charge
+(`payment_type: "mobilemoneyzm"`) feeds straight into the same
+`reconcile()` function the CLI and web UI already call on a batch, so
+matching, persistence, and dedup against a retried webhook delivery all
+work exactly the same way they do for an uploaded statement - no
+parallel matching path. No live Flutterwave account exists for this
+project; everything here is built and tested against Flutterwave's real
+public documentation, not a guess.
+
 ## Tests
 
 ```bash
@@ -262,8 +285,12 @@ you've now made the tool handle.
 - **No PDF statement support yet.** Some MoMo statements only come as PDFs.
   You'll need to convert to CSV/Excel by hand for now, or extend
   `loaders.py` with a PDF table extractor once you know how common this is.
-- **No direct MoMo API integration.** By design, per the plan — statement
-  upload first, API integration only once you know it's worth building.
+- **Live MoMo integration has never talked to a real Flutterwave
+  account.** Built and tested against Flutterwave's real public webhook
+  documentation, not a guess — but nothing here has been proven against
+  an actual sandbox or production account yet. Statement upload
+  (`cli.py reconcile` / the web UI's homepage) still works exactly as
+  before and isn't going anywhere.
 - **Combination matching is capped at 4 invoices** for performance
   (`_find_combo_match(max_size=4)` in `matcher.py`). Fine for now; revisit
   if a real customer routinely pays 5+ invoices in one transfer.

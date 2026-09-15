@@ -31,7 +31,7 @@ from flask import Flask, flash, redirect, render_template, request, send_file, u
 from werkzeug.utils import secure_filename
 
 from reconciler import load_catalog, load_invoices, load_momo_statement, reconcile
-from reconciler import db, orders, whatsapp
+from reconciler import db, flutterwave, orders, whatsapp
 from reconciler.report import write_report, write_aging_report
 
 APP_DIR = Path(__file__).resolve().parent
@@ -40,6 +40,7 @@ UPLOAD_DIR = Path(tempfile.gettempdir()) / "reconciliation-engine-uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+FLUTTERWAVE_SECRET_HASH = os.environ.get("FLUTTERWAVE_SECRET_HASH", "")
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
@@ -388,6 +389,40 @@ def whatsapp_webhook_receive():
     client = whatsapp.get_client()
     for message in messages:
         _handle_incoming_order(conn, business, message, client)
+    conn.close()
+
+    return "", 200
+
+
+@app.route("/momo/webhook", methods=["POST"])
+def momo_webhook_receive():
+    """Phase 10's live-reconciliation path, built against Flutterwave -
+    see reconciler/flutterwave.py's docstring for why that provider over
+    a direct MTN/Airtel integration. One webhook URL per business for
+    now (`/momo/webhook?business=<name>`), same convention as the
+    WhatsApp webhook. Never trusts a request without a valid verif-hash
+    - see docs/ARCHITECTURE.md's mobile money callback authentication
+    requirement."""
+    if not flutterwave.verify_signature(request.headers, FLUTTERWAVE_SECRET_HASH):
+        return "Signature verification failed", 401
+
+    business = request.args.get("business", "").strip() or "default"
+    payload = request.get_json(silent=True) or {}
+    payment = flutterwave.parse_webhook_payload(payload)
+    if payment is None:
+        # Not a completed Zambia-mobile-money charge (a card payment on
+        # the same account, a pending/failed charge, a different event
+        # type entirely) - not this project's concern, not an error.
+        return "", 200
+
+    conn = db.connect(DB_PATH)
+    invoices = db.open_invoices(conn, business)
+    momo_df = flutterwave.to_momo_dataframe(payment)
+    momo_df, skipped = db.filter_new_transactions(momo_df, db.known_transaction_ids(conn, business))
+
+    if not momo_df.empty:
+        results = reconcile(invoices, momo_df)
+        db.save_run(conn, results, business)
     conn.close()
 
     return "", 200

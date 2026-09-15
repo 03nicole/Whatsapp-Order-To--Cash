@@ -334,6 +334,34 @@ def test_duplicate_invoice_id_falls_back_to_earliest_dated(make_invoices, make_m
     assert all_inv.iloc[0]["balance"] == 1700  # earliest-dated (2026-01-01, amount 2200) paid down
 
 
+# --- Timezone-mixed inputs (found live via Phase 10's Flutterwave webhook) -
+
+def test_reconcile_handles_a_timezone_aware_transaction_date(make_invoices):
+    """Regression test: found live, not by inspection. A CSV-derived
+    invoices_df is always timezone-naive, but reconciler/flutterwave.py's
+    to_momo_dataframe() parses a live webhook's ISO timestamp
+    ("...Z" = UTC) into a timezone-AWARE momo_df - comparing the two
+    directly (invoices.at[i, "date"] <= txn["date"]) raised
+    TypeError: Cannot compare tz-naive and tz-aware timestamps the
+    moment a real webhook payload hit reconcile(). Built here with a
+    plain DataFrame (not the fixture) specifically to keep a tz-aware
+    date column, which make_momo's helper doesn't produce."""
+    invoices = make_invoices([dict(invoice_id="INV-1", customer_name="ABC Traders",
+                                    customer_phone="0977111111", amount=1750,
+                                    date="2026-09-01")])
+    momo = pd.DataFrame([{
+        "transaction_id": "T1",
+        "date": pd.Timestamp("2026-09-15T14:31:43.000Z"),  # tz-aware (UTC)
+        "amount": 1750.0,
+        "sender_name": "ABC Traders",
+        "sender_phone": "260977111111",
+        "reference": "",
+    }])
+    result = reconcile(invoices, momo)
+    assert len(result["matched"]) == 1
+    assert result["matched"].iloc[0]["matched_invoice"] == "INV-1"
+
+
 # --- Integration: full sample_data run pinned to known-good output -------
 
 def test_sample_data_reconciles_to_expected_outcome_counts():

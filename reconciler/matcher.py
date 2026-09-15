@@ -53,6 +53,18 @@ def _normalize_phone(phone: str) -> str:
     return digits[-9:] if len(digits) >= 9 else digits
 
 
+def _naive_datetime(series: pd.Series) -> pd.Series:
+    """Coerces a datetime column to timezone-naive, converting via UTC
+    first if it's tz-aware. reconcile()'s date comparisons assume both
+    DataFrames' `date` columns are directly comparable - true for two
+    CSV-derived columns, not guaranteed once a live webhook's tz-aware
+    ISO timestamp (reconciler/flutterwave.py) or a database round-trip
+    (db.open_invoices()) is one of the two sides."""
+    if getattr(series.dt, "tz", None) is not None:
+        return series.dt.tz_convert("UTC").dt.tz_localize(None)
+    return series
+
+
 def find_invoice_in_reference(reference: str, open_invoice_ids: list[str]) -> str | None:
     """Return the invoice_id if it appears (in any punctuation form) in the reference text."""
     norm_ref = _normalize_ref(reference)
@@ -87,11 +99,24 @@ def reconcile(invoices_df: pd.DataFrame, momo_df: pd.DataFrame,
           "unmatched":    DataFrame,
           "open_invoices": DataFrame,   # remaining balances after all matching
         }
-    `invoices_df` / `momo_df` are the outputs of loaders.load_invoices /
-    loaders.load_momo_statement. This function does not mutate its inputs.
+    `invoices_df` / `momo_df` are usually the outputs of
+    loaders.load_invoices / loaders.load_momo_statement, but not always
+    any more - db.open_invoices() and reconciler/flutterwave.py's
+    to_momo_dataframe() feed this function too, and don't all agree on
+    whether their `date` column carries a timezone (a live webhook's
+    ISO timestamp typically does; a CSV-uploaded date never does).
+    Comparing a tz-aware Timestamp against a naive one raises, so both
+    date columns are normalized to naive here - the one place every
+    producer's output actually converges - rather than trusting each
+    producer to remember. This function does not mutate its inputs.
     """
     invoices = invoices_df.copy()
     invoices["invoice_id"] = invoices["invoice_id"].astype(str)
+    if "date" in invoices.columns:
+        invoices["date"] = _naive_datetime(invoices["date"])
+    momo_df = momo_df.copy()
+    if "date" in momo_df.columns:
+        momo_df["date"] = _naive_datetime(momo_df["date"])
 
     # phone/name -> list of invoice row indices, for identifying the sender
     phone_index: dict[str, list[int]] = {}
