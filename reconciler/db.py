@@ -144,8 +144,23 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # SCHEMA's CREATE TABLE, which a real business's existing database
     # would just skip.
     _ensure_columns(conn, "orders", {"fulfilled_at": "TEXT", "fulfillment_note": "TEXT"})
+    # Same migration path, for the optional catalog fields a WhatsApp
+    # Commerce Catalog feed needs that a plain reconciliation catalog never
+    # did - see reconciler/loaders.py's CATALOG_OPTIONAL_ALIASES.
+    _ensure_columns(conn, "products", {"description": "TEXT", "image_url": "TEXT"})
     conn.commit()
     return conn
+
+
+def _none_if_blank(v):
+    """NULL/NaN and '' both mean "not set" - collapses either to a real
+    None rather than storing an empty string or (worse) pandas NaN, which
+    reads back truthy and has already caused one real bug this session
+    (stock_history's reason column rendering the literal text "nan")."""
+    if pd.isna(v):
+        return None
+    text = str(v).strip()
+    return text or None
 
 
 def known_balances(conn: sqlite3.Connection, business: str) -> dict[str, float]:
@@ -324,29 +339,60 @@ def aging_report(conn: sqlite3.Connection, business: str, as_of: date | None = N
 
 def save_catalog(conn: sqlite3.Connection, catalog_df: pd.DataFrame, business: str) -> None:
     """Upserts a product catalog (product_id, name, unit, unit_price,
-    quantity_on_hand). Re-importing the same catalog later updates price/
-    stock rather than duplicating products - same upsert-by-business-scoped-
-    key pattern as save_run() uses for invoices."""
+    quantity_on_hand, description, image_url). Re-importing the same
+    catalog later updates price/stock rather than duplicating products -
+    same upsert-by-business-scoped-key pattern as save_run() uses for
+    invoices. description/image_url use getattr rather than direct
+    attribute access: callers that built catalog_df by hand (tests, mostly)
+    predate these two columns and don't have them - that's fine, they just
+    save as NULL, same as a catalog file that never had those columns."""
     conn.executemany(
-        """INSERT INTO products (business, product_id, name, unit, unit_price, quantity_on_hand)
-           VALUES (?, ?, ?, ?, ?, ?)
+        """INSERT INTO products (business, product_id, name, unit, unit_price,
+                                  quantity_on_hand, description, image_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (business, product_id) DO UPDATE SET
                name = excluded.name,
                unit = excluded.unit,
                unit_price = excluded.unit_price,
-               quantity_on_hand = excluded.quantity_on_hand""",
-        [(business, r.product_id, r.name, r.unit, float(r.unit_price), int(r.quantity_on_hand))
+               quantity_on_hand = excluded.quantity_on_hand,
+               description = excluded.description,
+               image_url = excluded.image_url""",
+        [(business, r.product_id, r.name, r.unit, float(r.unit_price), int(r.quantity_on_hand),
+          _none_if_blank(getattr(r, "description", None)), _none_if_blank(getattr(r, "image_url", None)))
          for r in catalog_df.itertuples()],
     )
     conn.commit()
 
 
 def get_catalog(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
-    return pd.read_sql_query(
-        "SELECT product_id, name, unit, unit_price, quantity_on_hand "
+    df = pd.read_sql_query(
+        "SELECT product_id, name, unit, unit_price, quantity_on_hand, description, image_url "
         "FROM products WHERE business = ? ORDER BY product_id",
         conn, params=(business,),
     )
+    # Same NaN-reads-back-truthy normalization stock_history() already
+    # needed for its own nullable TEXT column - see its docstring.
+    for col in ("description", "image_url"):
+        df[col] = df[col].astype(object).where(df[col].notna(), None)
+    return df
+
+
+def update_product_details(conn: sqlite3.Connection, business: str, product_id: str,
+                            description: str | None, image_url: str | None) -> bool:
+    """Sets a product's description/image_url without requiring a full
+    catalog re-import - the same "adjust one thing without re-uploading
+    everything" principle adjust_stock() already established for stock in
+    Phase 6. A blank string clears the field to NULL rather than storing
+    an empty string, matching how CSV import already treats a blank cell.
+    Returns False if the product doesn't exist for this business."""
+    cursor = conn.execute(
+        "UPDATE products SET description = ?, image_url = ? WHERE business = ? AND product_id = ?",
+        (_none_if_blank(description), _none_if_blank(image_url), business, product_id),
+    )
+    if cursor.rowcount == 0:
+        return False
+    conn.commit()
+    return True
 
 
 def adjust_stock(conn: sqlite3.Connection, business: str, product_id: str, delta: int,

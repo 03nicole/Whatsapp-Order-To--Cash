@@ -114,6 +114,36 @@ def test_catalog_page_shows_adjustment_history_newest_first(client):
     assert body.index("damaged stock", history_start) < body.index("first delivery", history_start)
 
 
+# --- /catalog/edit (description/image) --------------------------------------
+
+def test_edit_product_details_sets_description_and_image(client):
+    _import_catalog(client)
+    r = client.post("/catalog/edit", data={
+        "business": "WABiz", "product_id": "COKE-24",
+        "description": "Refreshing cola 300ml x24", "image_url": "https://example.com/coke.jpg",
+    }, follow_redirects=True)
+    body = r.get_data(as_text=True)
+    assert "Updated details for COKE-24" in body
+    assert "Refreshing cola 300ml x24" in body
+    assert 'src="https://example.com/coke.jpg"' in body
+
+
+def test_edit_product_details_rejects_unknown_product(client):
+    _import_catalog(client)
+    r = client.post("/catalog/edit", data={
+        "business": "WABiz", "product_id": "NOPE-1",
+        "description": "x", "image_url": "https://example.com/x.jpg",
+    }, follow_redirects=True)
+    assert "No product" in r.get_data(as_text=True)
+    assert "NOPE-1" in r.get_data(as_text=True)
+
+
+def test_catalog_page_shows_placeholder_when_no_image_set(client):
+    _import_catalog(client)
+    r = client.get("/catalog", query_string={"business": "WABiz"})
+    assert "product-thumb-empty" in r.get_data(as_text=True)
+
+
 def test_order_consumption_also_appears_in_stock_history(client):
     """adjust_stock() is the single path both manual corrections and order
     confirmation go through - the audit trail should show both."""

@@ -61,6 +61,63 @@ def test_catalog_is_scoped_by_business(conn, catalog_df):
     assert len(db.get_catalog(conn, "biz-b")) == 0
 
 
+def test_catalog_without_description_or_image_url_columns_saves_as_none(conn, catalog_df):
+    """catalog_df (this fixture) predates description/image_url - the same
+    shape a hand-built DataFrame or an old-style catalog CSV import would
+    have. save_catalog() must not blow up on a missing attribute."""
+    db.save_catalog(conn, catalog_df, "biz")
+    result = db.get_catalog(conn, "biz")
+    assert result["description"].isna().all()
+    coke = result[result["product_id"] == "COKE-24"].iloc[0]
+    assert coke["description"] is None
+    assert coke["image_url"] is None
+
+
+def test_catalog_round_trips_description_and_image_url(conn, catalog_df):
+    with_details = catalog_df.copy()
+    with_details["description"] = ["Refreshing cola 300ml x24", None]
+    with_details["image_url"] = ["https://example.com/coke.jpg", None]
+    db.save_catalog(conn, with_details, "biz")
+
+    result = db.get_catalog(conn, "biz")
+    coke = result[result["product_id"] == "COKE-24"].iloc[0]
+    fanta = result[result["product_id"] == "FANTA-24"].iloc[0]
+    assert coke["description"] == "Refreshing cola 300ml x24"
+    assert coke["image_url"] == "https://example.com/coke.jpg"
+    assert fanta["description"] is None
+    assert fanta["image_url"] is None
+
+
+def test_update_product_details_sets_description_and_image_url(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    applied = db.update_product_details(
+        conn, "biz", "COKE-24", "Refreshing cola 300ml x24", "https://example.com/coke.jpg",
+    )
+    assert applied is True
+
+    coke = db.get_catalog(conn, "biz")
+    coke = coke[coke["product_id"] == "COKE-24"].iloc[0]
+    assert coke["description"] == "Refreshing cola 300ml x24"
+    assert coke["image_url"] == "https://example.com/coke.jpg"
+
+
+def test_update_product_details_blank_string_clears_the_field(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    db.update_product_details(conn, "biz", "COKE-24", "some description", "https://example.com/x.jpg")
+    db.update_product_details(conn, "biz", "COKE-24", "", "")
+
+    coke = db.get_catalog(conn, "biz")
+    coke = coke[coke["product_id"] == "COKE-24"].iloc[0]
+    assert coke["description"] is None
+    assert coke["image_url"] is None
+
+
+def test_update_product_details_returns_false_for_an_unknown_product(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    applied = db.update_product_details(conn, "biz", "NOT-A-PRODUCT", "x", "y")
+    assert applied is False
+
+
 def test_adjust_stock_applies_delta(conn, catalog_df):
     db.save_catalog(conn, catalog_df, "biz")
     db.adjust_stock(conn, "biz", "COKE-24", -10)

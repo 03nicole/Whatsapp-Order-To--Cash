@@ -167,6 +167,49 @@ def test_catalog_deduplicates_product_id_keeping_last(tmp_path, capsys):
     assert "not unique" in capsys.readouterr().out
 
 
+def test_catalog_description_and_image_url_default_to_none_when_absent(tmp_path):
+    csv = _write_csv(tmp_path / "catalog.csv", (
+        "SKU,Product Name,UOM,Price,Stock\n"
+        "COKE-24,Coca-Cola,box,120,50\n"
+    ))
+    df = load_catalog(csv)
+    assert df.loc[0, "description"] is None
+    assert df.loc[0, "image_url"] is None
+
+
+def test_catalog_recognizes_description_and_image_url_columns(tmp_path):
+    csv = _write_csv(tmp_path / "catalog.csv", (
+        "SKU,Product Name,UOM,Price,Stock,Description,Image URL\n"
+        "COKE-24,Coca-Cola,box,120,50,Refreshing cola 300ml x24,https://example.com/coke.jpg\n"
+    ))
+    df = load_catalog(csv)
+    assert df.loc[0, "description"] == "Refreshing cola 300ml x24"
+    assert df.loc[0, "image_url"] == "https://example.com/coke.jpg"
+
+
+def test_catalog_a_column_literally_named_description_is_not_treated_as_the_name(tmp_path):
+    """Regression test: "description" used to be a valid alias for the
+    product NAME field too, so a file whose only name-like header was
+    literally "Description" would (ambiguously, wrongly) become the
+    product's short title instead of its long description."""
+    csv = _write_csv(tmp_path / "catalog.csv", (
+        "SKU,Product Name,UOM,Price,Stock,Description\n"
+        "COKE-24,Coca-Cola,box,120,50,Refreshing cola 300ml x24\n"
+    ))
+    df = load_catalog(csv)
+    assert df.loc[0, "name"] == "Coca-Cola"
+    assert df.loc[0, "description"] == "Refreshing cola 300ml x24"
+
+
+def test_catalog_blank_description_cell_becomes_none_not_empty_string(tmp_path):
+    csv = _write_csv(tmp_path / "catalog.csv", (
+        "SKU,Product Name,UOM,Price,Stock,Description\n"
+        "COKE-24,Coca-Cola,box,120,50,\n"
+    ))
+    df = load_catalog(csv)
+    assert df.loc[0, "description"] is None
+
+
 def test_sample_catalog_loads_cleanly(capsys):
     """Regression test for the shipped sample_data/catalog.csv, used by
     the README's WhatsApp order-capture walkthrough - 12 products, no

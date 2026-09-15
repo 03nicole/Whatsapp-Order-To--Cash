@@ -245,6 +245,28 @@ def adjust_stock():
     return redirect(url_for("catalog_manage", business=business))
 
 
+@app.route("/catalog/edit", methods=["POST"])
+def edit_product_details():
+    """Sets a product's description/image - not something the original
+    catalog CSV shape ever carried, needed once WhatsApp's native Catalog/
+    Cart checkout made a real product photo worth having. Same "don't
+    require a full re-import for one field" shape as /catalog/adjust."""
+    business = request.form.get("business", "").strip() or "default"
+    product_id = request.form.get("product_id", "").strip()
+    description = request.form.get("description", "").strip()
+    image_url = request.form.get("image_url", "").strip()
+
+    conn = db.connect(DB_PATH)
+    applied = db.update_product_details(conn, business, product_id, description, image_url)
+    conn.close()
+    if not applied:
+        flash(f"No product '{product_id}' in the catalog for '{business}'.", "error")
+        return redirect(url_for("catalog_manage", business=business))
+
+    flash(f"Updated details for {product_id}.", "success")
+    return redirect(url_for("catalog_manage", business=business))
+
+
 @app.route("/orders")
 def orders_review():
     business = request.args.get("business", "").strip()

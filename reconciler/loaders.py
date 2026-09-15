@@ -32,10 +32,26 @@ INVOICE_ALIASES = {
 
 CATALOG_ALIASES = {
     "product_id": ["product_id", "sku", "code", "product code", "item code", "product no"],
-    "name": ["name", "product", "product name", "description", "item"],
+    # "description" deliberately isn't an alias for name: a header literally
+    # called "description" almost always means a longer descriptive blurb,
+    # not the product's short title - see the real description/image_url
+    # fields below, which are optional and handled separately from this
+    # required-fields dict.
+    "name": ["name", "product", "product name", "item"],
     "unit": ["unit", "uom", "unit of measure", "pack"],
     "unit_price": ["unit_price", "price", "unit price", "selling price"],
     "quantity_on_hand": ["quantity_on_hand", "stock", "qty", "quantity", "stock on hand", "qty on hand"],
+}
+
+# Unlike CATALOG_ALIASES above, these are genuinely optional - most catalog
+# files won't have them, and that's fine (WhatsApp Catalog/Cart images are a
+# later addition, not something every distributor's export was ever going to
+# carry). Looked up separately in load_catalog() rather than folded into
+# CATALOG_ALIASES, since _normalize_columns() treats every key there as
+# required and raises when a file doesn't have it.
+CATALOG_OPTIONAL_ALIASES = {
+    "description": ["description", "product description", "details", "about"],
+    "image_url": ["image_url", "image url", "image", "photo", "photo url", "picture", "picture url"],
 }
 
 MOMO_ALIASES = {
@@ -76,6 +92,28 @@ def _normalize_columns(df: pd.DataFrame, aliases: dict) -> pd.DataFrame:
         )
 
     return df.rename(columns=rename_map)
+
+
+def _find_optional_column(df: pd.DataFrame, candidates: list[str]) -> pd.Series:
+    """Like _normalize_columns, but for a single field that's fine to be
+    absent entirely - returns an all-None column instead of raising."""
+    lookup = {col.strip().lower(): col for col in df.columns}
+    for opt in candidates:
+        if opt in lookup:
+            return df[lookup[opt]]
+    return pd.Series([None] * len(df), index=df.index, dtype=object)
+
+
+def _clean_optional_str(series: pd.Series) -> pd.Series:
+    """Like _clean_str, but a blank/missing cell stays None rather than
+    becoming '' - for fields where "not provided" and "provided as an
+    empty string" should read the same way to every caller downstream."""
+    def clean(v):
+        if pd.isna(v):
+            return None
+        text = str(v).strip()
+        return text or None
+    return series.apply(clean)
 
 
 def _clean_str(series: pd.Series) -> pd.Series:
@@ -149,18 +187,27 @@ def load_invoices(path: str | Path) -> pd.DataFrame:
 def load_catalog(path: str | Path) -> pd.DataFrame:
     """
     Returns a DataFrame with columns:
-    product_id, name, unit, unit_price, quantity_on_hand
+    product_id, name, unit, unit_price, quantity_on_hand, description, image_url
 
     Same alias-matching convention as load_invoices/load_momo_statement -
     every wholesaler's product export will name these columns differently.
+    description/image_url are optional (see CATALOG_OPTIONAL_ALIASES) - most
+    catalog files won't have them, and that's fine; they come back as None
+    rather than failing the whole import.
     """
     df = _read_any(path)
+    optional = {
+        field: _find_optional_column(df, candidates)
+        for field, candidates in CATALOG_OPTIONAL_ALIASES.items()
+    }
     df = _normalize_columns(df, CATALOG_ALIASES)
     df["product_id"] = _clean_str(df["product_id"])
     df["name"] = _clean_str(df["name"])
     df["unit"] = _clean_str(df.get("unit", pd.Series(dtype=object)))
     df["unit_price"] = pd.to_numeric(df["unit_price"], errors="coerce")
     df["quantity_on_hand"] = pd.to_numeric(df["quantity_on_hand"], errors="coerce")
+    df["description"] = _clean_optional_str(optional["description"])
+    df["image_url"] = _clean_optional_str(optional["image_url"])
 
     bad_rows = df[df["unit_price"].isna() | df["quantity_on_hand"].isna()]
     if len(bad_rows):

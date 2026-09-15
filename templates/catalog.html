@@ -13,13 +13,23 @@
     {% if products %}
     <table class="data-table">
       <thead>
-        <tr><th>Code</th><th>Name</th><th>Unit</th><th>Price</th><th>Stock on hand</th></tr>
+        <tr><th></th><th>Code</th><th>Name</th><th>Unit</th><th>Price</th><th>Stock on hand</th></tr>
       </thead>
       <tbody>
         {% for p in products %}
         <tr>
+          <td>
+            {% if p.image_url %}
+            <img class="product-thumb" src="{{ p.image_url }}" alt="{{ p.name }}">
+            {% else %}
+            <span class="product-thumb product-thumb-empty" aria-hidden="true">?</span>
+            {% endif %}
+          </td>
           <td>{{ p.product_id }}</td>
-          <td>{{ p.name }}</td>
+          <td>
+            {{ p.name }}
+            {% if p.description %}<div class="product-desc">{{ p.description }}</div>{% endif %}
+          </td>
           <td>{{ p.unit }}</td>
           <td>K{{ "{:,.2f}".format(p.unit_price) }}</td>
           <td>{{ p.quantity_on_hand }}</td>
@@ -58,6 +68,31 @@
       Never re-imports the whole catalog — this changes one product's stock
       on hand directly, and every change (including stock consumed by a
       confirmed WhatsApp order) is logged below.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Edit product details</h2>
+    <form action="{{ url_for('edit_product_details') }}" method="post">
+      <input type="hidden" name="business" value="{{ business }}">
+      <label>
+        Product code
+        <input type="text" name="product_id" list="product-list" required>
+      </label>
+      <label>
+        Description (shown on the catalog page below)
+        <textarea name="description" rows="2" placeholder="e.g. Refreshing cola, 300ml x 24 bottles per carton"></textarea>
+      </label>
+      <label>
+        Image URL (a link to a hosted product photo)
+        <input type="url" name="image_url" placeholder="https://...">
+      </label>
+      <button type="submit">Save details</button>
+    </form>
+    <p class="hint">
+      Optional on every product — a plain product row with no photo or
+      description still works everywhere else in the system. Leaving a
+      field blank clears it.
     </p>
   </section>
 

@@ -220,6 +220,32 @@ table { border-collapse: collapse; width: 100%; }
 
 .data-table tbody tr:hover { background: var(--bg-page); }
 
+.product-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  display: block;
+  border: 1px solid var(--border);
+}
+
+.product-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: var(--bg-page);
+  font-size: 0.8rem;
+}
+
+.product-desc {
+  white-space: normal;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+  max-width: 32ch;
+}
+
 /* --- Analytics dashboard (Phase 9) ------------------------------------ */
 
 .stat-grid {
