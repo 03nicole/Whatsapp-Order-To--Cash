@@ -144,6 +144,49 @@ def test_catalog_page_shows_placeholder_when_no_image_set(client):
     assert "product-thumb-empty" in r.get_data(as_text=True)
 
 
+# --- /catalog/feed.csv (Meta Commerce Catalog export) ------------------------
+
+def test_catalog_page_shows_a_copyable_feed_url(client):
+    _import_catalog(client)
+    r = client.get("/catalog", query_string={"business": "WABiz"})
+    body = r.get_data(as_text=True)
+    assert "/catalog/feed.csv?business=WABiz&amp;token=" in body or "/catalog/feed.csv?business=WABiz&token=" in body
+
+
+def test_feed_rejects_a_missing_token(client):
+    _import_catalog(client)
+    r = client.get("/catalog/feed.csv", query_string={"business": "WABiz"})
+    assert r.status_code == 403
+
+
+def test_feed_rejects_a_wrong_token(client):
+    _import_catalog(client)
+    r = client.get("/catalog/feed.csv", query_string={"business": "WABiz", "token": "wrong"})
+    assert r.status_code == 403
+
+
+def test_feed_serves_a_valid_csv_with_the_correct_token(client):
+    _import_catalog(client)
+    token = app_module.catalog_feed_token("WABiz")
+    r = client.get("/catalog/feed.csv", query_string={"business": "WABiz", "token": token})
+    assert r.status_code == 200
+    assert r.mimetype == "text/csv"
+    body = r.get_data(as_text=True)
+    assert "COKE-24" in body
+    assert "id,title,description,availability,condition,price,link,image_link,brand" in body
+
+
+def test_feed_token_is_scoped_by_business(client):
+    """A token that's valid for one business must not work for another -
+    otherwise anyone who ever saw one business's feed URL could read
+    every other business's product/price list too."""
+    _import_catalog(client, business="WABiz")
+    _import_catalog(client, business="OtherBiz")
+    wabiz_token = app_module.catalog_feed_token("WABiz")
+    r = client.get("/catalog/feed.csv", query_string={"business": "OtherBiz", "token": wabiz_token})
+    assert r.status_code == 403
+
+
 def test_order_consumption_also_appears_in_stock_history(client):
     """adjust_stock() is the single path both manual corrections and order
     confirmation go through - the audit trail should show both."""

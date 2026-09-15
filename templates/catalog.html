@@ -44,6 +44,21 @@
 
   {% if products %}
   <section class="card">
+    <h2>WhatsApp Catalog feed</h2>
+    <p class="hint">
+      Register this URL in Meta Commerce Manager (Catalog → Data Sources → Data Feed)
+      as a scheduled fetch, and this catalog stays in sync automatically —
+      every product's <code>id</code> in the feed is this system's own
+      product code, so it always matches what a WhatsApp order webhook sends back.
+      Only reachable once this app is deployed somewhere Meta can poll it;
+      on a local machine this link works for testing the file shape, not for a real sync.
+    </p>
+    <input type="text" readonly value="{{ feed_url }}" onclick="this.select()" style="width:100%">
+  </section>
+  {% endif %}
+
+  {% if products %}
+  <section class="card">
     <h2>Adjust stock</h2>
     <form action="{{ url_for('adjust_stock') }}" method="post">
       <input type="hidden" name="business" value="{{ business }}">

@@ -18,6 +18,7 @@ either interface can be used interchangeably against the same data.
 
 from __future__ import annotations
 
+import hmac
 import os
 import secrets
 import sqlite3
@@ -27,11 +28,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from flask import Flask, Response, flash, redirect, render_template, request, send_file, url_for
 from werkzeug.utils import secure_filename
 
 from reconciler import load_catalog, load_invoices, load_momo_statement, reconcile
 from reconciler import db, flutterwave, orders, whatsapp
+from reconciler.catalog_feed import build_meta_feed_csv
 from reconciler.report import write_report, write_aging_report
 
 APP_DIR = Path(__file__).resolve().parent
@@ -41,9 +43,31 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
 FLUTTERWAVE_SECRET_HASH = os.environ.get("FLUTTERWAVE_SECRET_HASH", "")
+# Signs the catalog feed URL below (see catalog_feed_token()). Unset in the
+# common local/dev case - falls back to the process's own random
+# app.secret_key, which is fine for local testing but means the URL
+# changes on every restart; set this explicitly once the feed URL is
+# actually registered with Meta Commerce Manager, so it stays stable.
+CATALOG_FEED_SECRET = os.environ.get("CATALOG_FEED_SECRET", "")
+# Public base URL this app is reachable at, if it's been deployed
+# anywhere - unset in the local/dev default, in which case the feed's
+# `link` column is left blank rather than pointing at a URL nobody but
+# this machine can reach. See docs/ARCHITECTURE.md's deployment notes.
+CATALOG_BASE_URL = os.environ.get("CATALOG_BASE_URL", "").rstrip("/")
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
+
+
+def catalog_feed_token(business: str) -> str:
+    """HMAC of the business name, not a random per-request secret like
+    /download's tokens - Meta polls this URL on a recurring schedule, so
+    it has to keep working without this app remembering anything across
+    restarts (this app doesn't persist a session across them; see
+    CATALOG_FEED_SECRET above for why the URL is only stable long-term
+    once that env var is set explicitly)."""
+    secret = (CATALOG_FEED_SECRET or app.secret_key).encode()
+    return hmac.new(secret, business.encode(), "sha256").hexdigest()[:24]
 
 # token -> (path, friendly download name), for the download route. In-memory
 # and per-process: fine for a tool one person runs locally, not meant to
@@ -213,14 +237,43 @@ def catalog_manage():
     conn = db.connect(DB_PATH)
     businesses = db.known_businesses(conn)
     catalog_rows, history_rows = [], []
+    feed_url = None
     if business:
         catalog_rows = db.get_catalog(conn, business).to_dict(orient="records")
         history_rows = db.stock_history(conn, business).head(20).to_dict(orient="records")
+        feed_url = url_for("catalog_feed", business=business,
+                            token=catalog_feed_token(business), _external=True)
     conn.close()
     return render_template(
         "catalog.html", businesses=businesses, business=business or None,
-        products=catalog_rows, history=history_rows,
+        products=catalog_rows, history=history_rows, feed_url=feed_url,
     )
+
+
+@app.route("/catalog/feed.csv")
+def catalog_feed():
+    """Meta Commerce Catalog scheduled-feed endpoint - register the URL
+    shown on /catalog in Commerce Manager under Catalog -> Data Sources ->
+    Data Feed as a scheduled hosted-URL fetch (Meta supports polling as
+    often as hourly). `id` is always this system's own product_id, which
+    is what makes Phase 5b's retailer_id assumption hold automatically
+    instead of depending on a distributor configuring it correctly by
+    hand. Token-gated (see catalog_feed_token()) since, once registered,
+    this URL is polled from the public internet on a fixed schedule -
+    meaningless until this app is actually deployed somewhere reachable,
+    the same pre-existing deferred assumption the WhatsApp/MoMo webhooks
+    already have (see docs/ARCHITECTURE.md's deployment notes)."""
+    business = request.args.get("business", "").strip()
+    token = request.args.get("token", "")
+    if not business or not hmac.compare_digest(token, catalog_feed_token(business)):
+        return "Forbidden", 403
+
+    conn = db.connect(DB_PATH)
+    catalog_df = db.get_catalog(conn, business)
+    conn.close()
+    link_base = f"{CATALOG_BASE_URL}/catalog?business={business}" if CATALOG_BASE_URL else None
+    csv_text = build_meta_feed_csv(catalog_df, product_link_base=link_base)
+    return Response(csv_text, mimetype="text/csv")
 
 
 @app.route("/catalog/adjust", methods=["POST"])

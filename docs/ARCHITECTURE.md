@@ -295,6 +295,57 @@ this catalog's shape (FMCG SKUs, fixed pricing), it could cut a real
 chunk of Phase 5's custom "parse what the customer wants" scope — check
 this before writing a bespoke conversation-state machine.
 
+### Catalog sync — Phase 5b follow-up, built
+
+Phase 5b's native Catalog/Cart checkout (`reconciler/orders.py`'s
+`resolve_native_order()`) depends on an assumption it can't itself
+verify: that the distributor's Meta Commerce Catalog has each product's
+`retailer_id` set to match this system's own `product_id` exactly. Left
+as a manual setup step, that's a real, silent failure mode — a typo or a
+stale sync flags every affected order rather than shipping it wrong, but
+still means orders silently start failing for no reason visible from
+inside this app.
+
+**Researched 2026-09-15, against Meta's real product feed documentation**
+(not guessed): Commerce Manager supports populating a catalog by manual
+CSV/TSV/XLSX upload, a **scheduled fetch from a hosted URL** (as often as
+hourly), the Catalog Batch API (a live push, needs a Meta access token +
+catalog ID), or a partner-platform integration (Shopify, WooCommerce —
+not applicable here). The scheduled-feed-URL path was chosen for the same
+reason Flutterwave and the WhatsApp webhook itself were buildable without
+live credentials: this app just serves a URL Meta polls, no Meta API
+token or catalog ID needed to build or test it.
+
+Required feed fields, sourced from Meta's product feed spec: `id, title,
+description, availability, condition, price` (numeric + ISO 4217
+currency code, e.g. `"150.00 ZMW"`), `link, image_link, brand`. Mapping
+that against the `products` table exposed two fields this system's data
+model never had at all — `description` and a product image — closed as
+their own small data-model change (`products.description`,
+`products.image_url`, both nullable) rather than faking placeholder
+values in the feed itself.
+
+Built as `reconciler/catalog_feed.py` (`build_meta_feed_csv()`) +
+`GET /catalog/feed.csv?business=<name>&token=<token>` in `app.py`. `id`
+is always this system's own `product_id` — the actual fix for the
+retailer_id assumption above, since a distributor registering this feed
+never has to hand-type a matching retailer_id at all. A product with no
+description on file falls back to its name (a real value); a product
+with no photo yet leaves `image_link` blank rather than a placeholder
+image, so it shows up as genuinely incomplete in Meta's own catalog
+diagnostics — the same "never guess, never fake it" principle the
+reconciliation waterfall has followed since Phase 1.
+
+Token-gated with an HMAC of the business name (`CATALOG_FEED_SECRET` env
+var; falls back to the process's own random secret key when unset, fine
+for local testing, not stable across restarts — set it explicitly once
+this is registered with Meta for real) rather than left open, since once
+registered this URL is polled from the public internet on a fixed
+schedule. **Like the WhatsApp/MoMo webhooks before it, this route is
+inert until the app is actually deployed somewhere Meta's fetcher can
+reach** — see §6's hosting notes; nothing about building this ahead of
+that decision is new to this feature specifically.
+
 ### Mobile money (Zambia) — Phase 10, built, decision resolved
 
 **Resolved 2026-09-15 in favor of Flutterwave (the aggregator path)**,
