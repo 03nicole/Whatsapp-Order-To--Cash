@@ -1,0 +1,18 @@
+{% macro business_input(businesses, value='', placeholder=None, list_id='business-list') %}
+  <label>
+    Business name
+    <input type="text" name="business" list="{{ list_id }}"
+           {% if value %}value="{{ value }}"{% elif placeholder %}placeholder="{{ placeholder }}"{% endif %}
+           required>
+    <datalist id="{{ list_id }}">
+      {% for b in businesses %}<option value="{{ b }}">{% endfor %}
+    </datalist>
+  </label>
+{% endmacro %}
+
+{% macro business_picker_form(action, businesses, business='', button='View') %}
+  <form action="{{ action }}" method="get">
+    {{ business_input(businesses, value=business) }}
+    <button type="submit">{{ button }}</button>
+  </form>
+{% endmacro %}

@@ -1,16 +1,11 @@
 {% extends "base.html" %}
+{% from "_macros.html" import business_input %}
 {% block title %}Reconcile — Reconciliation Engine{% endblock %}
 {% block content %}
   <section class="card">
     <h2>Run a reconciliation</h2>
     <form action="{{ url_for('do_reconcile') }}" method="post" enctype="multipart/form-data">
-      <label>
-        Business name
-        <input type="text" name="business" list="business-list" placeholder="e.g. Sample Distributor Ltd" required>
-        <datalist id="business-list">
-          {% for b in businesses %}<option value="{{ b }}">{% endfor %}
-        </datalist>
-      </label>
+      {{ business_input(businesses, placeholder="e.g. Sample Distributor Ltd", list_id="business-list-reconcile") }}
       <label>
         Invoices file (.csv or .xlsx)
         <input type="file" name="invoices" accept=".csv,.xlsx,.xls" required>
@@ -35,10 +30,7 @@
   <section class="card">
     <h2>Accounts receivable (aging)</h2>
     <form action="{{ url_for('aging') }}" method="get">
-      <label>
-        Business name
-        <input type="text" name="business" list="business-list" placeholder="e.g. Sample Distributor Ltd" required>
-      </label>
+      {{ business_input(businesses, placeholder="e.g. Sample Distributor Ltd", list_id="business-list-aging") }}
       <button type="submit">View aging</button>
     </form>
     <p class="hint">Who owes you money right now, without re-uploading anything — requires at least one prior reconcile run for that business.</p>
@@ -47,10 +39,7 @@
   <section class="card">
     <h2>Product catalog (for WhatsApp order capture)</h2>
     <form action="{{ url_for('import_catalog') }}" method="post" enctype="multipart/form-data">
-      <label>
-        Business name
-        <input type="text" name="business" list="business-list" placeholder="e.g. Sample Distributor Ltd" required>
-      </label>
+      {{ business_input(businesses, placeholder="e.g. Sample Distributor Ltd", list_id="business-list-catalog") }}
       <label>
         Catalog file (.csv or .xlsx) — product code, name, unit, price, stock on hand
         <input type="file" name="catalog" accept=".csv,.xlsx,.xls" required>

@@ -6,6 +6,8 @@ Phase 2 persistence contract (invoice balances, transaction dedup) and
 shouldn't grow unrelated fixtures; this file adds its own.
 """
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -64,6 +66,24 @@ def test_adjust_stock_applies_delta(conn, catalog_df):
     db.adjust_stock(conn, "biz", "COKE-24", -10)
     result = db.get_catalog(conn, "biz")
     assert result.loc[result["product_id"] == "COKE-24", "quantity_on_hand"].iloc[0] == 40
+
+
+def test_adjust_stock_returns_true_on_success(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    assert db.adjust_stock(conn, "biz", "COKE-24", -10) is True
+
+
+def test_adjust_stock_returns_false_and_logs_nothing_for_an_unknown_product(conn, catalog_df):
+    """Regression guard: adjust_stock used to always insert a
+    stock_adjustments row even when the UPDATE matched nothing, which
+    would have logged a bogus audit entry for a change that never
+    happened. The route layer masked this by pre-checking existence
+    itself - this test exercises adjust_stock() directly so the
+    guarantee holds regardless of what calls it."""
+    db.save_catalog(conn, catalog_df, "biz")
+    result = db.adjust_stock(conn, "biz", "NOPE-1", -10, reason="should not be logged")
+    assert result is False
+    assert db.stock_history(conn, "biz").empty
 
 
 def test_adjust_stock_can_increase_quantity(conn, catalog_df):
@@ -199,3 +219,36 @@ def test_record_order_invoice_writes_into_the_existing_invoices_table(conn):
     assert open_df.loc[0, "invoice_id"] == "ORD-abc123"
     assert open_df.loc[0, "customer_name"] == "ABC Traders"
     assert open_df.loc[0, "balance"] == 1200.0
+
+
+def test_open_invoices_handles_a_mix_of_timezone_aware_and_naive_dates(conn):
+    """Regression test: found live, not by inspection. A manually-
+    uploaded invoice's date is date-only ("2026-01-01"); an order-
+    generated invoice's `placed_at` is a full ISO timestamp. Storing the
+    latter directly (a bug fixed in orders.build_invoice - now it stores
+    only the date portion) made a business's invoices column come back
+    entirely timezone-aware whenever every one of its invoices happened
+    to be order-generated, and pd.Timestamp(as_of) - df["date"] in
+    aging_report() raised TypeError the moment that column was compared
+    against a naive timestamp. This test stores a raw tz-aware string
+    directly (bypassing build_invoice's fix) so open_invoices() itself -
+    the actual defense - is what's being verified, not just the
+    call site that happens not to trigger it anymore."""
+    db.record_order_invoice(conn, "biz", {
+        "invoice_id": "ORD-1", "customer_name": "A", "customer_phone": "",
+        "amount": 100.0, "date": "2026-09-01",
+    })
+    db.record_order_invoice(conn, "biz", {
+        "invoice_id": "ORD-2", "customer_name": "B", "customer_phone": "",
+        "amount": 200.0, "date": "2026-09-15T14:31:43+00:00",
+    })
+
+    open_df = db.open_invoices(conn, "biz")
+    assert open_df["date"].dt.tz is None  # normalized, not mixed
+    assert len(open_df) == 2
+
+    aging_df = db.aging_report(conn, "biz", as_of=date(2026, 9, 20))
+    assert not aging_df.empty
+    days = dict(zip(aging_df["invoice_id"], aging_df["days_outstanding"]))
+    assert days["ORD-1"] == 19
+    assert days["ORD-2"] == 4

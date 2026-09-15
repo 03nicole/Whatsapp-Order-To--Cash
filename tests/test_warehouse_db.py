@@ -131,6 +131,15 @@ def test_mark_order_fulfilled_sets_status_and_timestamp(conn):
     assert row == ("fulfilled", "2026-01-02T09:00:00", "picked by Joseph")
 
 
+def test_mark_order_fulfilled_returns_true_on_success(conn):
+    _save_confirmed_order(conn, "biz", "order-1")
+    assert db.mark_order_fulfilled(conn, "biz", "order-1") is True
+
+
+def test_mark_order_fulfilled_returns_false_for_an_unknown_order(conn):
+    assert db.mark_order_fulfilled(conn, "biz", "does-not-exist") is False
+
+
 def test_mark_order_fulfilled_only_affects_confirmed_orders(conn):
     """A flagged order can't be marked fulfilled through this path - it
     has no invoice/stock consumption behind it yet."""
@@ -138,7 +147,7 @@ def test_mark_order_fulfilled_only_affects_confirmed_orders(conn):
                "placed_at": "2026-01-01T10:00:00", "status": "flagged",
                "raw_message": "10 Guinness", "invoice_id": None, "flag_reason": "unknown_product"}
     db.save_order(conn, "biz", flagged, [])
-    db.mark_order_fulfilled(conn, "biz", "bad-1")
+    assert db.mark_order_fulfilled(conn, "biz", "bad-1") is False
 
     row = conn.execute(
         "SELECT status, fulfilled_at FROM orders WHERE business = 'biz' AND order_id = 'bad-1'",

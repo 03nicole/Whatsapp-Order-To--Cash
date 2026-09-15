@@ -9,9 +9,8 @@ import io
 import json
 from pathlib import Path
 
-import pytest
-
 import app as app_module
+from conftest import webhook_payload
 
 SAMPLE_DATA = Path(__file__).resolve().parent.parent / "sample_data"
 
@@ -22,36 +21,12 @@ CATALOG_CSV = (
 )
 
 
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "DB_PATH", tmp_path / "test.db")
-    monkeypatch.setattr(app_module, "UPLOAD_DIR", tmp_path / "uploads")
-    monkeypatch.setattr(app_module, "WHATSAPP_VERIFY_TOKEN", "test-verify-token")
-    app_module.UPLOAD_DIR.mkdir()
-    app_module.app.config.update(TESTING=True)
-    return app_module.app.test_client()
-
-
 def _import_catalog(client, business="WABiz"):
     return client.post(
         "/catalog/import",
         data={"business": business, "catalog": (io.BytesIO(CATALOG_CSV.encode()), "catalog.csv")},
         content_type="multipart/form-data", follow_redirects=True,
     )
-
-
-def _webhook_payload(text, sender_phone="260977111111", sender_name="ABC Traders", message_id="wamid.1"):
-    return {
-        "entry": [{
-            "changes": [{
-                "value": {
-                    "contacts": [{"wa_id": sender_phone, "profile": {"name": sender_name}}],
-                    "messages": [{"from": sender_phone, "id": message_id, "type": "text",
-                                  "text": {"body": text}}],
-                }
-            }]
-        }]
-    }
 
 
 # --- catalog import ---------------------------------------------------------
@@ -144,7 +119,7 @@ def test_order_consumption_also_appears_in_stock_history(client):
     confirmation go through - the audit trail should show both."""
     _import_catalog(client)
     client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
-                data=json.dumps(_webhook_payload("10 COKE-24")),
+                data=json.dumps(webhook_payload("10 COKE-24")),
                 content_type="application/json")
 
     conn = app_module.db.connect(app_module.DB_PATH)
@@ -177,7 +152,7 @@ def test_webhook_verification_rejects_wrong_token(client):
 def test_confirmed_order_creates_an_invoice_in_the_existing_table(client):
     _import_catalog(client)
     r = client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
-                     data=json.dumps(_webhook_payload("10 COKE-24, 5 FANTA-24")),
+                     data=json.dumps(webhook_payload("10 COKE-24, 5 FANTA-24")),
                      content_type="application/json")
     assert r.status_code == 200
 
@@ -193,7 +168,7 @@ def test_confirmed_order_creates_an_invoice_in_the_existing_table(client):
 def test_confirmed_order_decrements_stock(client):
     _import_catalog(client)
     client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
-                data=json.dumps(_webhook_payload("10 COKE-24")),
+                data=json.dumps(webhook_payload("10 COKE-24")),
                 content_type="application/json")
 
     conn = app_module.db.connect(app_module.DB_PATH)
@@ -206,7 +181,7 @@ def test_confirmed_order_decrements_stock(client):
 def test_ambiguous_order_is_flagged_not_confirmed(client):
     _import_catalog(client)
     client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
-                data=json.dumps(_webhook_payload("10 Nonexistent Product")),
+                data=json.dumps(webhook_payload("10 Nonexistent Product")),
                 content_type="application/json")
 
     conn = app_module.db.connect(app_module.DB_PATH)
@@ -220,7 +195,7 @@ def test_ambiguous_order_is_flagged_not_confirmed(client):
 def test_insufficient_stock_flags_and_does_not_touch_stock(client):
     _import_catalog(client)
     client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
-                data=json.dumps(_webhook_payload("999 COKE-24")),
+                data=json.dumps(webhook_payload("999 COKE-24")),
                 content_type="application/json")
 
     conn = app_module.db.connect(app_module.DB_PATH)
@@ -243,7 +218,7 @@ def test_confirmed_order_sends_a_whatsapp_confirmation(client, monkeypatch):
     monkeypatch.setattr(app_module.whatsapp, "get_client", lambda: RecordingClient())
     _import_catalog(client)
     client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
-                data=json.dumps(_webhook_payload("10 COKE-24")),
+                data=json.dumps(webhook_payload("10 COKE-24")),
                 content_type="application/json")
 
     assert len(sent) == 1
@@ -257,7 +232,7 @@ def test_confirmed_order_sends_a_whatsapp_confirmation(client, monkeypatch):
 def test_orders_review_lists_flagged_orders(client):
     _import_catalog(client)
     client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
-                data=json.dumps(_webhook_payload("10 Nonexistent Product")),
+                data=json.dumps(webhook_payload("10 Nonexistent Product")),
                 content_type="application/json")
 
     r = client.get("/orders", query_string={"business": "WABiz"})
@@ -282,7 +257,7 @@ def test_order_generated_invoice_reconciles_against_a_real_momo_payment(client):
     use, not by calling reconciler.matcher directly."""
     _import_catalog(client)
     client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
-                data=json.dumps(_webhook_payload("10 COKE-24", message_id="wamid.order1")),
+                data=json.dumps(webhook_payload("10 COKE-24", message_id="wamid.order1")),
                 content_type="application/json")
 
     conn = app_module.db.connect(app_module.DB_PATH)

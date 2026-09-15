@@ -1,18 +1,10 @@
 {% extends "base.html" %}
+{% from "_macros.html" import business_picker_form %}
 {% block title %}Warehouse — Reconciliation Engine{% endblock %}
 {% block content %}
   <section class="card">
     <h2>Warehouse — picking list</h2>
-    <form action="{{ url_for('warehouse') }}" method="get">
-      <label>
-        Business name
-        <input type="text" name="business" list="business-list" value="{{ business or '' }}" required>
-        <datalist id="business-list">
-          {% for b in businesses %}<option value="{{ b }}">{% endfor %}
-        </datalist>
-      </label>
-      <button type="submit">View</button>
-    </form>
+    {{ business_picker_form(url_for('warehouse'), businesses, business) }}
     <p class="hint">
       Every confirmed order not yet marked fulfilled, oldest first. Stock
       was already decremented when the order confirmed — this just tracks

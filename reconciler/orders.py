@@ -148,13 +148,21 @@ def build_invoice(order: ParsedOrder, order_id: str, customer_name: str | None,
     """Only call once order.status == 'confirmed'. Shapes a plain dict
     matching the columns db.record_order_invoice writes into the
     EXISTING `invoices` table — Phase 5's entire point is producing a row
-    there, not a parallel schema."""
+    there, not a parallel schema.
+
+    `placed_at` is a full timestamp (used as-is for the order's own
+    audit trail), but an invoice's `date` is a date, matching what
+    load_invoices()/save_run() store for a manually-uploaded invoice
+    (date-only, no time-of-day or timezone) — storing the full
+    timestamp here made this invoice's date column timezone-aware while
+    every other invoice's is naive, which crashes aging_report()'s
+    pd.Timestamp(as_of) - df["date"] the moment the two get mixed."""
     return {
         "invoice_id": f"ORD-{order_id}",
         "customer_name": customer_name,
         "customer_phone": customer_phone,
         "amount": order.amount,
-        "date": placed_at,
+        "date": placed_at.split("T")[0],
     }
 
 

@@ -2,22 +2,7 @@ import io
 import re
 from pathlib import Path
 
-import pytest
-
-import app as app_module
-
 SAMPLE_DATA = Path(__file__).resolve().parent.parent / "sample_data"
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    """Points the app at a throwaway DB and upload dir so tests never touch
-    reconciliation.db or the shared temp upload folder."""
-    monkeypatch.setattr(app_module, "DB_PATH", tmp_path / "test.db")
-    monkeypatch.setattr(app_module, "UPLOAD_DIR", tmp_path / "uploads")
-    app_module.UPLOAD_DIR.mkdir()
-    app_module.app.config.update(TESTING=True)
-    return app_module.app.test_client()
 
 
 def _upload_sample(client, business="WebTestBiz", date_window="45"):

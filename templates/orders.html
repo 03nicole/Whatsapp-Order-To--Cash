@@ -1,18 +1,10 @@
 {% extends "base.html" %}
+{% from "_macros.html" import business_picker_form %}
 {% block title %}Flagged orders — Reconciliation Engine{% endblock %}
 {% block content %}
   <section class="card">
     <h2>Orders needing a human look</h2>
-    <form action="{{ url_for('orders_review') }}" method="get">
-      <label>
-        Business name
-        <input type="text" name="business" list="business-list" value="{{ business or '' }}" required>
-        <datalist id="business-list">
-          {% for b in businesses %}<option value="{{ b }}">{% endfor %}
-        </datalist>
-      </label>
-      <button type="submit">View</button>
-    </form>
+    {{ business_picker_form(url_for('orders_review'), businesses, business) }}
     <p class="hint">
       An order only ends up here when the system couldn't confidently
       resolve every line against the catalog, or stock was insufficient —

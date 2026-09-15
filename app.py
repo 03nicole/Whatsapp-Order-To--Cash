@@ -224,7 +224,7 @@ def catalog_manage():
 
 @app.route("/catalog/adjust", methods=["POST"])
 def adjust_stock():
-    business = request.form.get("business", "").strip()
+    business = request.form.get("business", "").strip() or "default"
     product_id = request.form.get("product_id", "").strip()
     reason = request.form.get("reason", "").strip() or None
     try:
@@ -234,14 +234,11 @@ def adjust_stock():
         return redirect(url_for("catalog_manage", business=business))
 
     conn = db.connect(DB_PATH)
-    exists = product_id in set(db.get_catalog(conn, business)["product_id"])
-    if not exists:
-        conn.close()
+    applied = db.adjust_stock(conn, business, product_id, delta, reason=reason)
+    conn.close()
+    if not applied:
         flash(f"No product '{product_id}' in the catalog for '{business}'.")
         return redirect(url_for("catalog_manage", business=business))
-
-    db.adjust_stock(conn, business, product_id, delta, reason=reason)
-    conn.close()
 
     flash(f"Adjusted {product_id} by {delta:+d}" + (f" ({reason})" if reason else "") + ".")
     return redirect(url_for("catalog_manage", business=business))
@@ -283,19 +280,16 @@ def warehouse():
 
 @app.route("/warehouse/fulfill", methods=["POST"])
 def fulfill_order():
-    business = request.form.get("business", "").strip()
+    business = request.form.get("business", "").strip() or "default"
     order_id = request.form.get("order_id", "").strip()
     note = request.form.get("note", "").strip() or None
 
     conn = db.connect(DB_PATH)
-    exists = order_id in set(db.fulfillable_orders(conn, business)["order_id"])
-    if not exists:
-        conn.close()
+    applied = db.mark_order_fulfilled(conn, business, order_id, note=note)
+    conn.close()
+    if not applied:
         flash(f"Order '{order_id}' isn't awaiting fulfillment for '{business}' (already done, or doesn't exist).")
         return redirect(url_for("warehouse", business=business))
-
-    db.mark_order_fulfilled(conn, business, order_id, note=note)
-    conn.close()
 
     flash(f"Order {order_id} marked fulfilled" + (f" ({note})" if note else "") + ".")
     return redirect(url_for("warehouse", business=business))

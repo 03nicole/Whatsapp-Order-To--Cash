@@ -35,3 +35,38 @@ def make_momo():
     def _make(rows):
         return pd.DataFrame([txn_row(**r) for r in rows])
     return _make
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    """Flask test client pointed at a throwaway DB and upload dir, so
+    tests never touch reconciliation.db or the shared temp upload folder.
+    Shared by every *_app.py test file - each one used to define this
+    fixture separately, and had already drifted (one had an extra
+    WHATSAPP_VERIFY_TOKEN line the others lacked)."""
+    import app as app_module  # imported lazily - only Flask-app tests need this
+    monkeypatch.setattr(app_module, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(app_module, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(app_module, "WHATSAPP_VERIFY_TOKEN", "test-verify-token")
+    app_module.UPLOAD_DIR.mkdir()
+    app_module.app.config.update(TESTING=True)
+    return app_module.app.test_client()
+
+
+def webhook_payload(text, sender_phone="260977111111", sender_name="ABC Traders", message_id="wamid.1"):
+    """Builds a Meta WhatsApp webhook POST body containing one text
+    message, matching the shape reconciler.whatsapp.parse_webhook_payload
+    expects. Shared by every test that needs to simulate an incoming
+    order message - each *_app.py test file used to build this shape by
+    hand, with drifting field names and defaults."""
+    return {
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "contacts": [{"wa_id": sender_phone, "profile": {"name": sender_name}}],
+                    "messages": [{"from": sender_phone, "id": message_id, "type": "text",
+                                  "text": {"body": text}}],
+                }
+            }]
+        }]
+    }

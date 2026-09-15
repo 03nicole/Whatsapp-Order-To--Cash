@@ -142,6 +142,21 @@ def test_build_invoice_shapes_a_row_for_the_existing_invoices_table(catalog):
     }
 
 
+def test_build_invoice_strips_time_and_timezone_from_a_full_timestamp(catalog):
+    """placed_at is a full ISO timestamp (used as-is for the order's own
+    audit trail), but an invoice's date must be date-only, matching what
+    a manually-uploaded invoice's date looks like - storing the full
+    timestamp made a business's invoices column come back entirely
+    timezone-aware whenever every invoice happened to be order-generated,
+    which crashed aging_report()'s date arithmetic against a naive
+    timestamp. Found live, not by inspection."""
+    order = parse_order_message("10 COKE-24", catalog)
+    invoice = build_invoice(order, order_id="abc123", customer_name="ABC Traders",
+                             customer_phone="0977111111",
+                             placed_at="2026-09-15T14:31:43+00:00")
+    assert invoice["date"] == "2026-09-15"
+
+
 def test_order_record_shapes_order_and_line_dicts(catalog):
     order = parse_order_message("10 COKE-24, 5 FANTA-24", catalog)
     order_dict, line_dicts = order_record(

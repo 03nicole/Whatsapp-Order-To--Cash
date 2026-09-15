@@ -122,27 +122,28 @@ AGING_BUCKETS = [(0, 30, "0-30"), (31, 60, "31-60"), (61, 90, "61-90"), (91, Non
 DETAIL_FIELDS = ["invoice_total", "remaining_balance", "invoice_balance", "candidate_invoices"]
 
 
-def _ensure_column(conn: sqlite3.Connection, table: str, column: str, coltype: str) -> None:
-    """Adds `column` to `table` if it isn't there yet. CREATE TABLE IF NOT
-    EXISTS only helps on a brand-new database - a business's existing
-    reconciliation.db already has rows in `table`, so a new column added
-    to SCHEMA's CREATE TABLE text would silently never apply to it. This
-    is the one-line migration path used instead whenever a later phase
-    needs to add a column to a table earlier phases already created."""
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    """Adds any of `columns` (name -> SQL type) missing from `table`, in
+    one pass. CREATE TABLE IF NOT EXISTS only helps on a brand-new
+    database - a business's existing reconciliation.db already has rows
+    in `table`, so a new column added to SCHEMA's CREATE TABLE text would
+    silently never apply to it. This is the migration path used instead
+    whenever a later phase needs to add columns to a table earlier phases
+    already created."""
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    if column not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+    for column, coltype in columns.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
     # Phase 7 ("warehouse fulfillment"): added after `orders` already
-    # shipped in Phase 5, so these go through _ensure_column rather than
+    # shipped in Phase 5, so these go through _ensure_columns rather than
     # SCHEMA's CREATE TABLE, which a real business's existing database
     # would just skip.
-    _ensure_column(conn, "orders", "fulfilled_at", "TEXT")
-    _ensure_column(conn, "orders", "fulfillment_note", "TEXT")
+    _ensure_columns(conn, "orders", {"fulfilled_at": "TEXT", "fulfillment_note": "TEXT"})
     conn.commit()
     return conn
 
@@ -273,8 +274,18 @@ def open_invoices(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
     df = pd.read_sql_query(
         "SELECT invoice_id, customer_name, customer_phone, amount, date, balance "
         "FROM invoices WHERE business = ? AND balance > 0 ORDER BY date",
-        conn, params=(business,), parse_dates=["date"],
+        conn, params=(business,),
     )
+    # Not parse_dates= at the query level: a business whose invoices all
+    # happen to share one "shape" (e.g. every invoice this run came from
+    # a WhatsApp order) can get a column pandas infers as uniformly
+    # tz-aware or uniformly naive depending on what's in it, and mixing
+    # that with a differently-shaped value elsewhere raises or silently
+    # NaTs rather than comparing cleanly. format="mixed" + utc=True +
+    # tz_localize(None) normalizes any mix of "2026-09-01" (a manually-
+    # uploaded invoice's date-only string) and a full ISO timestamp to
+    # one consistent naive dtype regardless of what's actually present.
+    df["date"] = pd.to_datetime(df["date"], format="mixed", utc=True).dt.tz_localize(None)
     return df
 
 
@@ -329,18 +340,25 @@ def get_catalog(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
 
 
 def adjust_stock(conn: sqlite3.Connection, business: str, product_id: str, delta: int,
-                  reason: str | None = None, adjusted_at: str | None = None) -> None:
+                  reason: str | None = None, adjusted_at: str | None = None) -> bool:
     """Applies `delta` (negative to consume stock) to one product's
     quantity_on_hand and logs it to stock_adjustments - used both when an
     order is confirmed (reason `order:<order_id>`) and for a manual
     correction/stock receipt (reason from the person making it). Every
     change to stock outside a full catalog re-import goes through here,
-    so stock_adjustments is a complete audit trail, not a partial one."""
-    conn.execute(
+    so stock_adjustments is a complete audit trail, not a partial one.
+
+    Returns False (and logs nothing) if `product_id` doesn't exist for
+    this business, rather than requiring the caller to check existence
+    separately first - the UPDATE's own WHERE clause is the one place
+    that condition needs to live."""
+    cursor = conn.execute(
         "UPDATE products SET quantity_on_hand = quantity_on_hand + ? "
         "WHERE business = ? AND product_id = ?",
         (delta, business, product_id),
     )
+    if cursor.rowcount == 0:
+        return False
     adjusted_at = adjusted_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn.execute(
         """INSERT INTO stock_adjustments (business, adjustment_id, product_id, delta, reason, adjusted_at)
@@ -348,6 +366,7 @@ def adjust_stock(conn: sqlite3.Connection, business: str, product_id: str, delta
         (business, uuid.uuid4().hex, product_id, delta, reason, adjusted_at),
     )
     conn.commit()
+    return True
 
 
 def stock_history(conn: sqlite3.Connection, business: str, product_id: str | None = None) -> pd.DataFrame:
@@ -453,20 +472,26 @@ def order_lines_for(conn: sqlite3.Connection, business: str, order_id: str) -> p
 
 
 def mark_order_fulfilled(conn: sqlite3.Connection, business: str, order_id: str,
-                          note: str | None = None, fulfilled_at: str | None = None) -> None:
+                          note: str | None = None, fulfilled_at: str | None = None) -> bool:
     """Records that a confirmed order has been picked/packed. Deliberately
     one step, not a multi-stage picking/packing workflow - per
     ROADMAP.md's own Phase 7 entry, there's no real operational data yet
     to design finer-grained stages against, so this names the one thing
     that's actually known to matter (has it left the warehouse-readiness
-    stage or not) rather than inventing states nobody's validated."""
+    stage or not) rather than inventing states nobody's validated.
+
+    Returns False if `order_id` isn't a confirmed, not-yet-fulfilled
+    order for this business - the UPDATE's own WHERE clause is the one
+    place that eligibility rule needs to live, rather than callers
+    re-deriving it via a separate fulfillable_orders() lookup first."""
     fulfilled_at = fulfilled_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
-    conn.execute(
+    cursor = conn.execute(
         "UPDATE orders SET status = 'fulfilled', fulfilled_at = ?, fulfillment_note = ? "
         "WHERE business = ? AND order_id = ? AND status = 'confirmed'",
         (fulfilled_at, note, business, order_id),
     )
     conn.commit()
+    return cursor.rowcount > 0
 
 
 def aging_summary_by_customer(aging_df: pd.DataFrame) -> pd.DataFrame:

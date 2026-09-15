@@ -8,23 +8,12 @@ separate from test_orders_db.py.
 import io
 import json
 
-import pytest
-
-import app as app_module
+from conftest import webhook_payload
 
 CATALOG_CSV = (
     "SKU,Product Name,UOM,Price,Stock\n"
     "COKE-24,Coca-Cola 300ml 24-pack,box,120,50\n"
 )
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "DB_PATH", tmp_path / "test.db")
-    monkeypatch.setattr(app_module, "UPLOAD_DIR", tmp_path / "uploads")
-    app_module.UPLOAD_DIR.mkdir()
-    app_module.app.config.update(TESTING=True)
-    return app_module.app.test_client()
 
 
 def _confirm_an_order_via_webhook(client, business="WABiz", message_id="wamid.1"):
@@ -33,15 +22,9 @@ def _confirm_an_order_via_webhook(client, business="WABiz", message_id="wamid.1"
         data={"business": business, "catalog": (io.BytesIO(CATALOG_CSV.encode()), "catalog.csv")},
         content_type="multipart/form-data",
     )
-    payload = {
-        "entry": [{"changes": [{"value": {
-            "contacts": [{"wa_id": "260977111111", "profile": {"name": "ABC Traders"}}],
-            "messages": [{"from": "260977111111", "id": message_id, "type": "text",
-                          "text": {"body": "10 COKE-24"}}],
-        }}]}]
-    }
     client.post("/whatsapp/webhook", query_string={"business": business},
-                data=json.dumps(payload), content_type="application/json")
+                data=json.dumps(webhook_payload("10 COKE-24", message_id=message_id)),
+                content_type="application/json")
 
 
 def test_warehouse_page_with_no_business_shows_the_picker(client):
@@ -95,13 +78,8 @@ def test_fulfill_order_rejects_double_fulfillment(client):
 
 def test_warehouse_never_lists_a_flagged_order(client):
     _confirm_an_order_via_webhook(client)  # sets up catalog
-    payload = {
-        "entry": [{"changes": [{"value": {
-            "contacts": [{"wa_id": "260977222222", "profile": {"name": "XYZ Co"}}],
-            "messages": [{"from": "260977222222", "id": "wamid.flagged", "type": "text",
-                          "text": {"body": "5 Nonexistent Product"}}],
-        }}]}]
-    }
+    payload = webhook_payload("5 Nonexistent Product", sender_phone="260977222222",
+                               sender_name="XYZ Co", message_id="wamid.flagged")
     client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
                 data=json.dumps(payload), content_type="application/json")
 
