@@ -1,9 +1,14 @@
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
+from reconciler import load_catalog
 from reconciler.orders import (
     build_invoice, check_stock, order_record, parse_order_message,
 )
+
+SAMPLE_DATA = Path(__file__).resolve().parent.parent / "sample_data"
 
 
 @pytest.fixture
@@ -170,3 +175,19 @@ def test_order_record_shapes_order_and_line_dicts(catalog):
     assert len(line_dicts) == 2
     assert line_dicts[0]["product_id"] == "COKE-24"
     assert line_dicts[0]["resolution"] == "exact_code"
+
+
+# --- Regression test against the shipped sample_data/catalog.csv ---------
+
+def test_sample_catalog_order_matches_the_readme_walkthrough():
+    """Pins the exact order the README's 'Try the whole loop' demo uses
+    (also exercised live against the running server, and end-to-end
+    through reconciliation and warehouse fulfillment) to a known-good
+    total - a regression anchor the same way
+    test_matcher.py::test_sample_data_reconciles_to_expected_outcome_counts
+    is for the reconciliation sample data."""
+    catalog = load_catalog(SAMPLE_DATA / "catalog.csv")
+    order = parse_order_message("10 COKE-24, 5 FANTA-24, 2 SUGAR-50", catalog)
+    order = check_stock(order, catalog)
+    assert order.status == "confirmed"
+    assert order.amount == 10 * 120 + 5 * 110 + 2 * 650  # 3050.0

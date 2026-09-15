@@ -1,7 +1,11 @@
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from reconciler.loaders import load_catalog, load_invoices, load_momo_statement
+
+SAMPLE_DATA = Path(__file__).resolve().parent.parent / "sample_data"
 
 
 def _write_csv(path, text):
@@ -161,3 +165,16 @@ def test_catalog_deduplicates_product_id_keeping_last(tmp_path, capsys):
     assert len(df) == 1
     assert df.loc[0, "unit_price"] == 130
     assert "not unique" in capsys.readouterr().out
+
+
+def test_sample_catalog_loads_cleanly(capsys):
+    """Regression test for the shipped sample_data/catalog.csv, used by
+    the README's WhatsApp order-capture walkthrough - 12 products, no
+    warnings, no dropped/deduplicated rows."""
+    df = load_catalog(SAMPLE_DATA / "catalog.csv")
+    assert len(df) == 12
+    assert set(df["product_id"]) == {
+        "COKE-24", "FANTA-24", "SPRITE-24", "MAZOE-2L", "SUGAR-50", "MEALIE-25",
+        "COOKOIL-5L", "SOAP-BLU", "SALT-1KG", "CANDLE-BX", "NAILS-5KG", "BATT-AA",
+    }
+    assert capsys.readouterr().out == ""  # no warnings

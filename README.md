@@ -159,6 +159,36 @@ of it - visible on the web UI's `/orders` page. A cleanly-resolved order
 writes an invoice, decrements stock, and confirms back to the customer
 over WhatsApp (or into the logging client's record, in dev).
 
+**Try the whole loop** with `sample_data/catalog.csv` (12 products - the
+same "Sample Distributor Ltd" business the reconciliation walkthrough
+above uses) and a simulated webhook payload, no real WhatsApp account
+needed:
+
+```bash
+# 1. Import the sample catalog
+curl -F "business=Sample Distributor Ltd" \
+     -F "catalog=@sample_data/catalog.csv;type=text/csv" \
+     http://127.0.0.1:5000/catalog/import
+
+# 2. Simulate a WhatsApp order (this is the shape a real Meta webhook POST body has)
+curl -H "Content-Type: application/json" -d '{
+  "entry": [{"changes": [{"value": {
+    "contacts": [{"wa_id": "260977111111", "profile": {"name": "ABC Traders"}}],
+    "messages": [{"from": "260977111111", "id": "wamid.demo1", "type": "text",
+                  "text": {"body": "10 COKE-24, 5 FANTA-24, 2 SUGAR-50"}}]
+  }}]}]
+}' "http://127.0.0.1:5000/whatsapp/webhook?business=Sample%20Distributor%20Ltd"
+```
+
+That creates invoice `ORD-wamid.demo1` for K3,050.00 and decrements
+COKE-24/FANTA-24/SUGAR-50 stock - check `/catalog?business=Sample+Distributor+Ltd`
+to see it. Reconcile it for real by uploading a MoMo statement (through
+the web UI's homepage, or `cli.py reconcile`) with a transaction for
+K3,050 referencing `ORD-wamid.demo1`, then mark it fulfilled from
+`/warehouse?business=Sample+Distributor+Ltd` - the same invoice, stock,
+and reconciliation machinery a manually-uploaded invoice file uses, at
+every step.
+
 ### Stock management
 
 Phase 6: the `/catalog` page (linked from the homepage) shows a
