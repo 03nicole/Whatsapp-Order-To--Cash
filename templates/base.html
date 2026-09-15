@@ -18,6 +18,7 @@
       <a href="{{ url_for('catalog_manage') }}" class="{{ 'active' if request.endpoint in ('catalog_manage', 'adjust_stock') else '' }}">Catalog &amp; Stock</a>
       <a href="{{ url_for('orders_review') }}" class="{{ 'active' if request.endpoint == 'orders_review' else '' }}">Orders</a>
       <a href="{{ url_for('warehouse') }}" class="{{ 'active' if request.endpoint in ('warehouse', 'fulfill_order') else '' }}">Warehouse</a>
+      <a href="{{ url_for('analytics') }}" class="{{ 'active' if request.endpoint == 'analytics' else '' }}">Analytics</a>
     </nav>
   </header>
   <main>

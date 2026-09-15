@@ -18,13 +18,16 @@ unsure" principle as the matcher, gated by a stock check, writing
 straight into the same `invoices` table a manual upload would), and
 Phase 6, **stock management** (receive/correct stock for one product
 without re-importing the whole catalog, with a full audit trail — see
-"Order capture" below), and Phase 7, **warehouse fulfillment tracking**
+"Order capture" below), Phase 7, **warehouse fulfillment tracking**
 (a picking list of confirmed orders, one "mark fulfilled" action — see
-"Warehouse" below). **Phase 7 was built ahead of its own validation
-gate, deliberately** — see [`docs/ROADMAP.md`](docs/ROADMAP.md)'s
+"Warehouse" below), and Phase 9, **an analytics dashboard**
+(`/analytics` — built entirely from numbers this tool already tracked,
+see "Analytics" below). **Phases 7 and 9 were both built ahead of their
+own validation gates, deliberately** — see [`docs/ROADMAP.md`](docs/ROADMAP.md)'s
 validation-gates section for exactly what that means and why it doesn't
-carry forward automatically to Phase 8. Delivery and analytics are still
-scoped but not yet built. Full system analysis:
+carry forward automatically to Phase 8, 10, or 11. Delivery, live MoMo
+webhooks, and fiscalization are still scoped but not yet built. Full
+system analysis:
 
 - [Requirements](docs/REQUIREMENTS.md) — problem statement, ICP, actors, functional/non-functional requirements, scope
 - [Architecture](docs/ARCHITECTURE.md) — component design, reference systems (Wasoko, Twiga Foods, Sukhiba, ChatCash, Safaricom Daraja/M-Pesa, EU PEPPOL/EN16931), tech stack decisions
@@ -209,6 +212,20 @@ this just tracks whether it's left the warehouse-ready stage, via one
 multi-stage pick/pack workflow - there's no real operational data yet to
 design finer-grained stages against (see `docs/ROADMAP.md`'s note on why
 this phase was built ahead of its own stated validation gate).
+
+### Analytics
+
+Phase 9: the `/analytics` page - built entirely from numbers this tool
+has always tracked and already treated as meaningful (the same
+matched/partial/needs_review/unmatched breakdown `report.py`'s Excel
+Summary sheet has shown since Phase 1, the same aging buckets the aging
+view already computes), not new invented metrics. Total outstanding,
+match rate, the reconciliation outcome breakdown, an aging-bucket
+snapshot, order-capture stats, and lowest-stock-on-hand - ranked, not
+filtered by an invented "low stock" threshold, since there's no real
+data yet on what a sensible reorder point looks like per product. Built
+ahead of its own stated validation gate (see `docs/ROADMAP.md`) against
+whatever demo data exists today, not months of real reconciled data.
 
 ## Tests
 

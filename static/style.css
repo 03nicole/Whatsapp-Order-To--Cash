@@ -15,6 +15,20 @@
   --info-bg: #eaf2f8;
   --info-border: #aed6f1;
   --info-ink: #1a5276;
+
+  /* dataviz skill: fixed status palette (never themed) - source of
+     truth is the shipped reference palette, not re-derived here */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+
+  /* dataviz skill: sequential blue ramp, ordinal steps only (>= step 250
+     on light per the ramp's own 2:1 floor for discrete/ordinal marks) */
+  --seq-250: #86b6ef;
+  --seq-350: #5598e7;
+  --seq-450: #2a78d6;
+  --seq-600: #184f95;
 }
 
 * { box-sizing: border-box; }
@@ -205,3 +219,100 @@ table { border-collapse: collapse; width: 100%; }
 }
 
 .data-table tbody tr:hover { background: var(--bg-page); }
+
+/* --- Analytics dashboard (Phase 9) ------------------------------------ */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.stat-tile {
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+}
+
+.stat-tile .stat-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.3rem;
+}
+
+.stat-tile .stat-value {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: proportional-nums;
+}
+
+/* Proportional stacked bar (reconciliation outcome breakdown) - each
+   segment is a status color; a 2px surface gap separates touching
+   segments instead of a border, per the dataviz skill's mark spec. */
+.stacked-bar {
+  display: flex;
+  height: 22px;
+  border-radius: 4px;
+  overflow: hidden;
+  gap: 2px;
+  background: var(--bg-page);
+  margin: 0.75rem 0;
+}
+
+.stacked-bar .segment { height: 100%; min-width: 2px; }
+.segment-matched      { background: var(--status-good); }
+.segment-partial      { background: var(--status-warning); }
+.segment-needs_review { background: var(--status-serious); }
+.segment-unmatched    { background: var(--status-critical); }
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.85rem;
+  color: var(--ink);
+  margin-bottom: 1rem;
+}
+
+.chart-legend .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
+
+/* Ordinal bars (aging buckets) - single bars, not stacked, growing from
+   a left baseline; capped at 24px thick per the mark spec, rounded on
+   the data end only, square at the baseline. */
+.ordinal-bars { display: flex; flex-direction: column; gap: 0.6rem; margin: 0.75rem 0; }
+
+.ordinal-bar-row {
+  display: grid;
+  grid-template-columns: 70px 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.ordinal-bar-row .bar-label { color: var(--muted); }
+
+.ordinal-bar-track {
+  background: var(--bg-page);
+  border-radius: 4px;
+  height: 22px;
+  overflow: hidden;
+}
+
+.ordinal-bar-fill {
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+}
+
+.ordinal-bar-row .bar-value { color: var(--ink); font-weight: 600; text-align: right; white-space: nowrap; }

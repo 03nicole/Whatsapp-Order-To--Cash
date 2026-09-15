@@ -1,8 +1,9 @@
 # Roadmap — WhatsApp Order-to-Cash for FMCG Distributors
 
 See [REQUIREMENTS.md](REQUIREMENTS.md) and [ARCHITECTURE.md](ARCHITECTURE.md)
-for the reasoning behind each phase. Phases 1–7 are **done and tested**;
-everything from Phase 8 is scoped but not yet built. Each phase names its
+for the reasoning behind each phase. Phases 1–7 and 9 are **done and
+tested**; Phase 8 and everything from Phase 10 is scoped but not yet
+built. Each phase names its
 exit criteria — the point at which it's proven enough to justify starting
 the next one — because building ahead of validation is exactly the
 mistake this project has avoided so far (see the original README's own
@@ -21,18 +22,27 @@ happened once the CLI's core was proven and tested).
 | 5 | WhatsApp order capture → invoice generation (`orders.py`, `whatsapp.py`) | Structured catalog-code/name parsing waterfall (never guesses on an ambiguous or unknown product, exactly like the reconciliation waterfall never guesses on amount alone); stock check gates confirmation; a confirmed order writes into the **same** `invoices` table a manual upload would. Proven with a real webhook payload driven against a live running server, not just the test client — see the "end-to-end" test below. `matcher.py` and `report.py` untouched; `db.py` gained new tables/helpers plus one fix (`combine_with_open_invoices` — see below) |
 | 6 | Stock management beyond catalog re-import (`/catalog` page, `db.adjust_stock`/`stock_history`) | Receive new stock or correct a count for one product without re-uploading the whole file; every change — manual or order-driven — is logged to a `stock_adjustments` audit trail (same "every decision is traceable" principle as `match_rule`, applied to stock). 12 new tests, verified live against the running server |
 | 7 | Warehouse fulfillment tracking (`/warehouse` picking list, `db.mark_order_fulfilled`) | One action — mark a confirmed order fulfilled, with an optional note — not a speculative multi-stage pick/pack workflow (see note below on why this was built ahead of its own gate). 17 new tests, including a migration test against a database that already had order rows from before this phase existed; verified live against the running server and its real pre-existing data |
+| 9 | Owner analytics dashboard (`/analytics`) | Built entirely from numbers this tool already tracked and already treated as meaningful — the same outcome breakdown `report.py`'s Excel Summary sheet has shown since Phase 1, the same aging buckets the aging view already computes — not new invented metrics. Also built ahead of its own stated gate (see below). 16 new tests. Live verification against real accumulated demo data caught a genuine pre-existing bug in `_bucket()` (a negative days-outstanding fell through to the *worst* bucket instead of the best) — fixed, with a regression test |
 
-**Phase 7 was built deliberately ahead of its own stated gate.** Unlike
-Phases 5–6 (framed from the start as low-risk extensions of the already-
-validated reconciliation engine), this roadmap's own Phase 7 entry
-originally said "do not build before Phase 5–6 are live with a real
-pilot... this phase has no software-design work worth doing yet, only
-operational learning to gather first." That gate was never satisfied —
-no real pilot exists yet. The user was asked directly whether to hold
-off or proceed anyway, and chose to proceed. This is a real, accepted
-risk: the single "mark fulfilled" action here is a guess at the right
-granularity, and Phase 8+ inherits the same accepted risk unless a
-future conversation explicitly revisits it.
+**Phases 7 and 9 were built deliberately ahead of their own stated
+gates.** Unlike Phases 5–6 (framed from the start as low-risk extensions
+of the already-validated reconciliation engine), this roadmap's own
+Phase 7 entry originally said "do not build before Phase 5–6 are live
+with a real pilot... this phase has no software-design work worth doing
+yet, only operational learning to gather first," and Phase 9's said
+"do not build before a few months of real reconciled data exist... an
+analytics dashboard against sample data would be building for a
+hypothetical, not a customer." Neither gate was satisfied — no real
+pilot, and no real reconciled data, exist yet. In both cases the user
+was asked directly whether to hold off or proceed anyway, and chose to
+proceed each time - asked separately, not assumed: the Phase 7 answer
+was never treated as covering Phase 9's gate too. This is a real,
+accepted risk in both cases: Phase 7's
+single "mark fulfilled" action is a guess at the right granularity, and
+Phase 9's metrics/thresholds are chosen from what the tool already
+tracked rather than from what a real owner asked to see. Phase 8, 10,
+and 11 inherit the same accepted-risk *option* but not the *decision* —
+each still needs to be asked about on its own.
 
 **One thing Phase 5 exposed and fixed in the existing persistence layer:**
 `merge_persisted_balances()` only overrides the balance of an invoice
@@ -52,11 +62,6 @@ end to end, and by dedicated tests in `test_orders_db.py`.
 ### Phase 8 — Delivery assignment/tracking *(validation-gated — still unbuilt)*
 Same caveat Phase 7 originally had and built past anyway — needs real order-volume and delivery-pattern
 data to design against, not assumptions.
-
-### Phase 9 — Owner analytics dashboard *(validation-gated)*
-**Do not build before:** a few months of real reconciled data exist to
-build against. An analytics dashboard against sample data would be
-building for a hypothetical, not a customer.
 
 ### Phase 10 — Live MoMo webhook integration *(validation-gated)*
 Replaces statement-upload reconciliation with the Daraja-style live
@@ -105,18 +110,20 @@ the result per prospect.
    lines rather than individual salespeople's personal numbers, and that
    manual reconciliation is costing them real hours or money). **This has
    not been done yet** — it's the original README's caution, and it
-   still gates Phases 8–11. Phases 5 and 6 were built ahead of it
-   deliberately, on the reasoning that both extend the already-validated
-   reconciliation engine (every new invoice still lands in the same
-   table, still goes through the same waterfall; every stock change is
-   logged the same way a match rule is) rather than committing to
-   warehouse/delivery complexity - a genuinely low-risk case. **Phase 7
-   is different:** it was NOT that kind of low-risk extension - it's
-   exactly the "no software-design work worth doing yet, only
-   operational learning to gather first" category this gate exists for
-   - and got built anyway because the user was asked directly and chose
-   to proceed. That's a legitimate call, but don't retroactively treat
-   Phase 7 as if it had been low-risk all along, and don't assume Phase
-   8 gets the same treatment without asking again - "build anyway" was
+   still gates Phases 8, 10, and 11. Phases 5 and 6 were built ahead of
+   it deliberately, on the reasoning that both extend the already-
+   validated reconciliation engine (every new invoice still lands in the
+   same table, still goes through the same waterfall; every stock change
+   is logged the same way a match rule is) rather than committing to
+   warehouse/delivery complexity - a genuinely low-risk case. **Phases 7
+   and 9 are different:** neither was that kind of low-risk extension -
+   Phase 7 is exactly the "no software-design work worth doing yet, only
+   operational learning to gather first" category this gate exists for,
+   and Phase 9 is exactly the "would be building for a hypothetical, not
+   a customer" category - and both got built anyway because the user was
+   asked directly, separately, and chose to proceed each time. That's a
+   legitimate call, but don't retroactively treat either as if it had
+   been low-risk all along, and don't assume Phase 8, 10, or 11 get the
+   same treatment without asking again - each "build anyway" was
    answered once, for one phase, not as a standing instruction to skip
    this gate going forward.

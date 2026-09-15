@@ -161,6 +161,23 @@ def test_aging_bucket_boundaries(conn, make_invoices, make_momo):
     assert buckets["INV-91"] == "90+"
 
 
+def test_aging_bucket_handles_a_future_dated_invoice_as_0_30_not_90_plus(conn, make_invoices, make_momo):
+    """Regression test: found live via the analytics dashboard, not by
+    inspection. A negative days-outstanding (clock/timezone skew, or a
+    literal future-dated invoice) used to fall through _bucket()'s loop
+    entirely and land in the last bucket by accident - exactly backwards,
+    since a not-yet-due invoice is the LEAST overdue thing on the books."""
+    as_of = date(2026, 6, 1)
+    rows = [dict(invoice_id="INV-FUTURE", amount=100,
+                 date=(as_of + timedelta(days=1)).isoformat())]
+    result = _reconcile_result(make_invoices, make_momo, rows, [])
+    db.save_run(conn, result, "biz")
+
+    aging_df = db.aging_report(conn, "biz", as_of=as_of)
+    assert aging_df.loc[0, "days_outstanding"] == -1
+    assert aging_df.loc[0, "bucket"] == "0-30"
+
+
 def test_aging_summary_by_customer_rolls_up_and_zero_fills_empty_buckets(conn, make_invoices, make_momo):
     as_of = date(2026, 6, 1)
     rows = [

@@ -278,6 +278,36 @@ def warehouse():
     )
 
 
+@app.route("/analytics")
+def analytics():
+    """Phase 9's dashboard - built entirely from numbers this tool has
+    always tracked and already treats as meaningful (the same outcome
+    breakdown the Excel Summary sheet has shown since Phase 1, the same
+    aging buckets the aging view already computes), not new invented
+    metrics. Built ahead of its own stated validation gate - see
+    docs/ROADMAP.md's Phase 9 entry - against whatever demo/sample data
+    exists today, not months of real reconciled data."""
+    business = request.args.get("business", "").strip()
+    conn = db.connect(DB_PATH)
+    businesses = db.known_businesses(conn)
+    data = None
+    if business:
+        aging_df = db.aging_report(conn, business)
+        data = {
+            "reconciliation": db.reconciliation_summary(conn, business),
+            "total_outstanding": float(aging_df["balance"].sum()) if not aging_df.empty else 0.0,
+            "open_invoice_count": len(aging_df),
+            "bucket_totals": db.aging_bucket_totals(aging_df),
+            "orders": db.order_summary(conn, business),
+            "low_stock": db.lowest_stock(conn, business, limit=5).to_dict(orient="records"),
+            "backlog": len(db.fulfillable_orders(conn, business)),
+        }
+    conn.close()
+    return render_template(
+        "analytics.html", businesses=businesses, business=business or None, data=data,
+    )
+
+
 @app.route("/warehouse/fulfill", methods=["POST"])
 def fulfill_order():
     business = request.form.get("business", "").strip() or "default"

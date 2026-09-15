@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% from "_macros.html" import business_picker_form %}
+{% block title %}Analytics — Reconciliation Engine{% endblock %}
+{% block content %}
+  <section class="card">
+    <h2>Analytics</h2>
+    {{ business_picker_form(url_for('analytics'), businesses, business) }}
+    <p class="hint">
+      Built from the same numbers this tool has always tracked - the
+      reconciliation outcome breakdown and aging buckets - not new
+      invented metrics. This dashboard was built ahead of its own
+      validation gate (see <code>docs/ROADMAP.md</code>'s Phase 9 entry)
+      against whatever data exists today, which for most businesses
+      right now means demo data, not months of real activity.
+    </p>
+  </section>
+
+  {% if business and data %}
+  <section class="card">
+    <h2>{{ business }}</h2>
+    <div class="stat-grid">
+      <div class="stat-tile">
+        <div class="stat-label">Total outstanding</div>
+        <div class="stat-value">K{{ "{:,.0f}".format(data.total_outstanding) }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Match rate</div>
+        <div class="stat-value">{{ "{:.0%}".format(data.reconciliation.match_rate) }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Orders auto-confirmed</div>
+        <div class="stat-value">{{ data.orders.by_status.confirmed + data.orders.by_status.fulfilled }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Warehouse backlog</div>
+        <div class="stat-value">{{ data.backlog }}</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Reconciliation outcomes</h2>
+    {% set recon = data.reconciliation %}
+    {% if recon.total_count == 0 %}
+    <p>No reconciled transactions yet for "{{ business }}".</p>
+    {% else %}
+    <div class="stacked-bar">
+      {% for outcome in ['matched', 'partial', 'needs_review', 'unmatched'] %}
+        {% set o = recon.by_outcome[outcome] %}
+        {% if o.count > 0 %}
+        <div class="segment segment-{{ outcome }}"
+             style="flex: {{ o.count }} 0 0"
+             title="{{ outcome | replace('_', ' ') | title }}: {{ o.count }} (K{{ '{:,.2f}'.format(o.amount) }})"></div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <div class="chart-legend">
+      {% for outcome, class in [('matched', 'good'), ('partial', 'warning'), ('needs_review', 'serious'), ('unmatched', 'critical')] %}
+        {% set o = recon.by_outcome[outcome] %}
+        <span><span class="swatch" style="background: var(--status-{{ class }})"></span>{{ outcome | replace('_', ' ') | title }}: {{ o.count }} (K{{ "{:,.2f}".format(o.amount) }})</span>
+      {% endfor %}
+    </div>
+    <p class="hint">{{ recon.total_count }} transaction(s) reconciled, K{{ "{:,.2f}".format(recon.total_amount) }} total.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Accounts receivable aging</h2>
+    {% if data.open_invoice_count == 0 %}
+    <p>No open invoices for "{{ business }}".</p>
+    {% else %}
+    {% set max_bucket = data.bucket_totals.values() | max %}
+    <div class="ordinal-bars">
+      {% for bucket, color in [('0-30', 'seq-250'), ('31-60', 'seq-350'), ('61-90', 'seq-450'), ('90+', 'seq-600')] %}
+      <div class="ordinal-bar-row">
+        <span class="bar-label">{{ bucket }} days</span>
+        <div class="ordinal-bar-track">
+          <div class="ordinal-bar-fill" style="width: {{ (data.bucket_totals[bucket] / max_bucket * 100) if max_bucket else 0 }}%; background: var(--{{ color }})"
+               title="{{ bucket }} days: K{{ '{:,.2f}'.format(data.bucket_totals[bucket]) }}"></div>
+        </div>
+        <span class="bar-value">K{{ "{:,.2f}".format(data.bucket_totals[bucket]) }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="hint">{{ data.open_invoice_count }} open invoice(s), K{{ "{:,.2f}".format(data.total_outstanding) }} total.
+       See <a href="{{ url_for('aging', business=business) }}">the aging view</a> for a per-customer breakdown.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Orders</h2>
+    <div class="stat-grid">
+      <div class="stat-tile">
+        <div class="stat-label">Confirmed (awaiting fulfillment)</div>
+        <div class="stat-value">{{ data.orders.by_status.confirmed }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Fulfilled</div>
+        <div class="stat-value">{{ data.orders.by_status.fulfilled }}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Flagged (needs a human)</div>
+        <div class="stat-value">{{ data.orders.by_status.flagged }}</div>
+      </div>
+    </div>
+    {% if data.orders.by_status.flagged > 0 %}
+    <p class="hint">See <a href="{{ url_for('orders_review', business=business) }}">flagged orders</a> to resolve them.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Lowest stock on hand</h2>
+    {% if data.low_stock %}
+    <table class="data-table">
+      <thead><tr><th>Product</th><th>Code</th><th>Stock on hand</th></tr></thead>
+      <tbody>
+        {% for p in data.low_stock %}
+        <tr>
+          <td>{{ p.name }}</td>
+          <td>{{ p.product_id }}</td>
+          <td>{{ p.quantity_on_hand }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint">Not filtered by a "low stock" threshold - there's no real data yet on what a
+       sensible reorder point looks like per product. Ranked lowest-first so you can judge.
+       <a href="{{ url_for('catalog_manage', business=business) }}">Manage stock</a> to receive more.</p>
+    {% else %}
+    <p>No products in the catalog for "{{ business }}" yet.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+  <p><a href="{{ url_for('index') }}">&larr; Back</a></p>
+{% endblock %}

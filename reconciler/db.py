@@ -290,6 +290,16 @@ def open_invoices(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
 
 
 def _bucket(days: int) -> str:
+    # A negative day count (clock/timezone skew between when an invoice's
+    # date was stamped and when as_of is evaluated, or a literal future-
+    # dated invoice) isn't matched by any (lo, hi) range above, and used
+    # to fall through the loop to the *last* bucket ("90+") by accident -
+    # exactly backwards, since a not-yet-due invoice is the least
+    # overdue thing on the books, not the most. Clamp to 0 first: found
+    # live via the analytics dashboard (Phase 9), not by inspection - a
+    # demo invoice from earlier the same day as `as_of` was showing as
+    # "90+ days overdue" instead of "0-30".
+    days = max(days, 0)
     for lo, hi, label in AGING_BUCKETS:
         if hi is None or days <= hi:
             if days >= lo:
@@ -507,3 +517,77 @@ def aging_summary_by_customer(aging_df: pd.DataFrame) -> pd.DataFrame:
     pivot = pivot[[b[2] for b in AGING_BUCKETS]]
     pivot.insert(0, "total_owed", pivot.sum(axis=1))
     return pivot.reset_index().sort_values("total_owed", ascending=False).reset_index(drop=True)
+
+
+# --- Phase 9 ("analytics") -------------------------------------------------
+#
+# Deliberately built from numbers this tool has always tracked and already
+# treats as meaningful - the same matched/partial/needs_review/unmatched
+# breakdown report.py's Summary sheet has shown since Phase 1, and the same
+# aging buckets the aging view already computes - rather than inventing new
+# metrics with no real usage behind them yet. See docs/ROADMAP.md's Phase 9
+# entry: this was built ahead of its own stated validation gate (no real
+# reconciled data exists yet, only demo data), a deliberate accepted risk.
+
+def reconciliation_summary(conn: sqlite3.Connection, business: str) -> dict:
+    """Transaction counts and total amounts by outcome, across every
+    persisted reconcile() run for this business - the live-dashboard
+    version of the Excel Summary sheet's own breakdown."""
+    rows = conn.execute(
+        "SELECT outcome, COUNT(*), COALESCE(SUM(amount), 0) FROM transactions "
+        "WHERE business = ? GROUP BY outcome",
+        (business,),
+    ).fetchall()
+    by_outcome = {outcome: {"count": count, "amount": amount} for outcome, count, amount in rows}
+    for outcome in ("matched", "partial", "needs_review", "unmatched"):
+        by_outcome.setdefault(outcome, {"count": 0, "amount": 0.0})
+    total_count = sum(v["count"] for v in by_outcome.values())
+    total_amount = sum(v["amount"] for v in by_outcome.values())
+    match_rate = (by_outcome["matched"]["count"] / total_count) if total_count else 0.0
+    return {"by_outcome": by_outcome, "total_count": total_count,
+            "total_amount": total_amount, "match_rate": match_rate}
+
+
+def aging_bucket_totals(aging_df: pd.DataFrame) -> dict:
+    """Total outstanding balance per aging bucket, in bucket order,
+    zero-filled for empty buckets - the same rollup
+    aging_summary_by_customer() does per-customer, collapsed to one
+    number per bucket for a dashboard tile."""
+    totals = {label: 0.0 for _, _, label in AGING_BUCKETS}
+    if not aging_df.empty:
+        totals.update(aging_df.groupby("bucket")["balance"].sum().to_dict())
+    return {label: totals[label] for _, _, label in AGING_BUCKETS}
+
+
+def order_summary(conn: sqlite3.Connection, business: str) -> dict:
+    """Order counts by status, and the total invoice value of every
+    order that resolved automatically (confirmed or since fulfilled) -
+    the order-capture equivalent of reconciliation_summary()."""
+    rows = conn.execute(
+        "SELECT status, COUNT(*) FROM orders WHERE business = ? GROUP BY status",
+        (business,),
+    ).fetchall()
+    by_status = {status: count for status, count in rows}
+    for status in ("confirmed", "flagged", "fulfilled"):
+        by_status.setdefault(status, 0)
+    confirmed_value = conn.execute(
+        "SELECT COALESCE(SUM(i.amount), 0) FROM orders o "
+        "JOIN invoices i ON i.business = o.business AND i.invoice_id = o.invoice_id "
+        "WHERE o.business = ? AND o.status IN ('confirmed', 'fulfilled')",
+        (business,),
+    ).fetchone()[0]
+    return {"by_status": by_status, "confirmed_value": confirmed_value}
+
+
+def lowest_stock(conn: sqlite3.Connection, business: str, limit: int = 5) -> pd.DataFrame:
+    """The `limit` products with the least quantity_on_hand for this
+    business. Deliberately not filtered by an invented "low stock"
+    threshold - there's no real data yet on what a sensible reorder
+    point looks like for any given product - just ranked so a human can
+    judge, the same "surface the number, let a person decide" approach
+    the reconciliation waterfall itself uses whenever it's unsure."""
+    return pd.read_sql_query(
+        "SELECT product_id, name, quantity_on_hand FROM products "
+        "WHERE business = ? ORDER BY quantity_on_hand ASC LIMIT ?",
+        conn, params=(business, limit),
+    )
