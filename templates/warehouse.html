@@ -17,7 +17,7 @@
       {% for order in orders %}
       <section class="card">
         <h2>{{ order.order_id }} — {{ order.customer_name or '(unknown customer)' }}</h2>
-        <p class="hint">Placed {{ order.placed_at }} · Invoice {{ order.invoice_id }} · {{ order.customer_phone or '' }}</p>
+        <p class="hint">Placed {{ order.placed_at }} · Invoice <a href="{{ url_for('view_invoice', invoice_id=order.invoice_id, business=business) }}">{{ order.invoice_id }}</a> · {{ order.customer_phone or '' }}</p>
         <table class="data-table">
           <thead><tr><th>Product</th><th>Quantity</th><th>Line total</th></tr></thead>
           <tbody>

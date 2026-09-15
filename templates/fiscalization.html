@@ -65,7 +65,7 @@
         {% for f in failed %}
         <tr>
           <td>{{ f.order_id }}</td>
-          <td>{{ f.invoice_id }}</td>
+          <td><a href="{{ url_for('view_invoice', invoice_id=f.invoice_id, business=business) }}">{{ f.invoice_id }}</a></td>
           <td>{{ f.customer_name or '' }}</td>
           <td>{{ f.placed_at }}</td>
           <td>{{ f.fiscalization_error }}</td>

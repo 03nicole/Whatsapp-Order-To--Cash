@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Invoice {{ invoice.invoice_id }} — {{ business }}{% endblock %}
+{% block content %}
+  <section class="card invoice-card">
+    <div class="invoice-head">
+      <div>
+        <div class="invoice-seller">{{ business }}</div>
+        <div class="hint">Seller</div>
+      </div>
+      <div class="invoice-meta">
+        <div class="invoice-title">INVOICE</div>
+        <div>{{ invoice.invoice_id }}</div>
+        <div class="hint">{{ invoice.date }}</div>
+      </div>
+    </div>
+
+    <div class="invoice-parties">
+      <div>
+        <div class="hint">Bill to</div>
+        <div>{{ invoice.customer_name or '(no customer name on file)' }}</div>
+        <div class="hint">{{ invoice.customer_phone or '' }}</div>
+      </div>
+      <div class="invoice-status invoice-status-{{ payment_status|lower|replace(' ', '-') }}">
+        {{ payment_status }}
+      </div>
+    </div>
+
+    {% if invoice.lines %}
+    <table class="data-table">
+      <thead>
+        <tr><th>Product</th><th>Qty</th><th>Unit price</th><th>Line total</th></tr>
+      </thead>
+      <tbody>
+        {% for line in invoice.lines %}
+        <tr>
+          <td>{{ line.name }} <span class="hint">({{ line.product_id }})</span></td>
+          <td>{{ line.quantity }}</td>
+          <td>K{{ "{:,.2f}".format(line.unit_price) }}</td>
+          <td>K{{ "{:,.2f}".format(line.line_total) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="hint">
+      Line-item detail isn't available for this invoice — it was uploaded from a
+      file rather than generated from a WhatsApp order, and no per-product
+      breakdown was ever captured for it.
+    </p>
+    {% endif %}
+
+    <div class="invoice-totals">
+      <div><span>Amount</span><span>K{{ "{:,.2f}".format(invoice.amount) }}</span></div>
+      <div><span>Paid so far</span><span>K{{ "{:,.2f}".format(invoice.amount - invoice.balance) }}</span></div>
+      <div class="invoice-balance"><span>Balance due</span><span>K{{ "{:,.2f}".format(invoice.balance) }}</span></div>
+    </div>
+
+    {% if invoice.order_id %}
+    <p class="hint">
+      Order {{ invoice.order_id }}, placed {{ invoice.placed_at }}.
+      {% if invoice.fiscalization_status == 'fiscalized' %}Fiscalized with ZRA.
+      {% elif invoice.fiscalization_status == 'failed' %}ZRA fiscalization needs a retry — see
+        <a href="{{ url_for('fiscalization', business=business) }}">Fiscalization</a>.
+      {% endif %}
+    </p>
+    {% endif %}
+
+    <div class="invoice-actions no-print">
+      <button type="button" onclick="window.print()">Print / save as PDF</button>
+    </div>
+  </section>
+  <p class="no-print"><a href="{{ url_for('aging', business=business) }}">&larr; Back to aging</a></p>
+{% endblock %}

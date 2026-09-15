@@ -320,6 +320,37 @@ def edit_product_details():
     return redirect(url_for("catalog_manage", business=business))
 
 
+@app.route("/invoice/<invoice_id>")
+def view_invoice(invoice_id):
+    """A real, renderable invoice document - the first one this system
+    has ever had. Until now 'invoice' meant only a ledger row
+    (amount/balance) used for reconciliation matching, never something a
+    customer or distributor could actually look at. Printable via the
+    browser's own print-to-PDF - no new dependency for that."""
+    business = request.args.get("business", "").strip()
+    if not business:
+        flash("Business name is required to look up an invoice.", "error")
+        return redirect(url_for("index"))
+
+    conn = db.connect(DB_PATH)
+    invoice = db.get_invoice_detail(conn, business, invoice_id)
+    conn.close()
+    if invoice is None:
+        flash(f"No invoice '{invoice_id}' found for '{business}'.", "error")
+        return redirect(url_for("index"))
+
+    if invoice["balance"] <= 0:
+        payment_status = "Paid in full"
+    elif invoice["balance"] < invoice["amount"]:
+        payment_status = "Partially paid"
+    else:
+        payment_status = "Awaiting payment"
+
+    return render_template(
+        "invoice.html", business=business, invoice=invoice, payment_status=payment_status,
+    )
+
+
 @app.route("/orders")
 def orders_review():
     business = request.args.get("business", "").strip()

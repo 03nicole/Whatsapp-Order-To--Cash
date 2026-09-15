@@ -632,6 +632,58 @@ def order_lines_for(conn: sqlite3.Connection, business: str, order_id: str) -> p
     )
 
 
+def get_invoice_detail(conn: sqlite3.Connection, business: str, invoice_id: str) -> dict | None:
+    """Everything one invoice needs to render as an actual document -
+    the ledger row itself (amount/balance/customer, unchanged since
+    Phase 1), plus - when this invoice was order-generated - its real
+    per-product line items from order_lines, joined against the
+    catalog's CURRENT name for display (order_lines only ever stored
+    product_id, never a name snapshot; unit_price/line_total still come
+    from order_lines itself, so the price shown is what was actually
+    charged, not today's catalog price).
+
+    A manually-uploaded invoice (no matching row in `orders`) has a real
+    amount/balance but no line-item detail, since none was ever
+    captured - `lines` comes back empty rather than guessed, and the
+    template shows that honestly instead of a blank-looking table.
+
+    Returns None if no such invoice exists for this business."""
+    invoice = conn.execute(
+        "SELECT invoice_id, customer_name, customer_phone, amount, date, balance "
+        "FROM invoices WHERE business = ? AND invoice_id = ?",
+        (business, invoice_id),
+    ).fetchone()
+    if invoice is None:
+        return None
+    result = dict(zip(
+        ["invoice_id", "customer_name", "customer_phone", "amount", "date", "balance"], invoice,
+    ))
+
+    order = conn.execute(
+        "SELECT order_id, placed_at, status, fiscalization_status FROM orders "
+        "WHERE business = ? AND invoice_id = ?",
+        (business, invoice_id),
+    ).fetchone()
+    result["order_id"], result["placed_at"], result["order_status"], result["fiscalization_status"] = (
+        order if order else (None, None, None, None)
+    )
+    result["lines"] = []
+    if order:
+        lines = conn.execute(
+            """SELECT ol.product_id, p.name, ol.quantity_requested, ol.unit_price, ol.line_total
+               FROM order_lines ol LEFT JOIN products p
+                 ON p.business = ol.business AND p.product_id = ol.product_id
+               WHERE ol.business = ? AND ol.order_id = ? ORDER BY ol.line_no""",
+            (business, result["order_id"]),
+        ).fetchall()
+        result["lines"] = [
+            {"product_id": pid, "name": name or pid, "quantity": qty,
+             "unit_price": unit_price, "line_total": line_total}
+            for pid, name, qty, unit_price, line_total in lines
+        ]
+    return result
+
+
 def mark_order_fulfilled(conn: sqlite3.Connection, business: str, order_id: str,
                           note: str | None = None, fulfilled_at: str | None = None) -> bool:
     """Records that a confirmed order has been picked/packed. Deliberately
