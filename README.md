@@ -1,5 +1,7 @@
 # Reconciliation Engine — V0/V1
 
+[![Tests](https://github.com/03nicole/Whatsapp-Order-To--Cash/actions/workflows/tests.yml/badge.svg)](https://github.com/03nicole/Whatsapp-Order-To--Cash/actions/workflows/tests.yml)
+
 Matches a business's MoMo statement against its invoices and produces an
 Excel report showing what's matched, partially paid, needs a human look, or
 unmatched. This is the V0 "manual service" tool from the plan: you run it on
