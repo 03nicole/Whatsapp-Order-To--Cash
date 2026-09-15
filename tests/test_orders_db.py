@@ -118,6 +118,79 @@ def test_update_product_details_returns_false_for_an_unknown_product(conn, catal
     assert applied is False
 
 
+# --- Phase 11: vat_category_code / item_class_code (ZRA fiscalization) ------
+
+def test_catalog_has_no_tax_fields_set_by_default(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    coke = db.get_catalog(conn, "biz")
+    coke = coke[coke["product_id"] == "COKE-24"].iloc[0]
+    assert coke["vat_category_code"] is None
+    assert coke["item_class_code"] is None
+
+
+def test_update_product_tax_fields_sets_both_fields(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    applied = db.update_product_tax_fields(conn, "biz", "COKE-24", "A", "10101010")
+    assert applied is True
+
+    coke = db.get_catalog(conn, "biz")
+    coke = coke[coke["product_id"] == "COKE-24"].iloc[0]
+    assert coke["vat_category_code"] == "A"
+    assert coke["item_class_code"] == "10101010"
+
+
+def test_update_product_tax_fields_returns_false_for_an_unknown_product(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    applied = db.update_product_tax_fields(conn, "biz", "NOT-A-PRODUCT", "A", "10101010")
+    assert applied is False
+
+
+def test_recatalog_import_does_not_wipe_tax_fields(conn, catalog_df):
+    """A routine catalog CSV re-import (save_catalog()) must never touch
+    vat_category_code/item_class_code - those are only ever set one
+    product at a time, deliberately, via update_product_tax_fields()."""
+    db.save_catalog(conn, catalog_df, "biz")
+    db.update_product_tax_fields(conn, "biz", "COKE-24", "A", "10101010")
+
+    updated_prices = catalog_df.copy()
+    updated_prices.loc[updated_prices["product_id"] == "COKE-24", "unit_price"] = 999.0
+    db.save_catalog(conn, updated_prices, "biz")
+
+    coke = db.get_catalog(conn, "biz")
+    coke = coke[coke["product_id"] == "COKE-24"].iloc[0]
+    assert coke["unit_price"] == 999.0  # the re-import did apply
+    assert coke["vat_category_code"] == "A"  # but didn't wipe this
+    assert coke["item_class_code"] == "10101010"
+
+
+# --- Phase 11: zra_settings --------------------------------------------------
+
+def test_zra_settings_round_trips(conn):
+    db.save_zra_settings(conn, "biz", "https://vsdc.example.com", "user1", "pass1",
+                          "1000000000", "000", "1000000000_VSDC")
+    settings = db.get_zra_settings(conn, "biz")
+    assert settings == {
+        "server_url": "https://vsdc.example.com", "username": "user1", "password": "pass1",
+        "tpin": "1000000000", "bhf_id": "000", "device_serial": "1000000000_VSDC",
+    }
+
+
+def test_zra_settings_returns_none_when_not_configured(conn):
+    assert db.get_zra_settings(conn, "unconfigured-biz") is None
+
+
+def test_zra_settings_upserts_rather_than_duplicates(conn):
+    db.save_zra_settings(conn, "biz", "https://old.example.com", "u", "p", "t", "b", "d")
+    db.save_zra_settings(conn, "biz", "https://new.example.com", "u", "p", "t", "b", "d")
+    settings = db.get_zra_settings(conn, "biz")
+    assert settings["server_url"] == "https://new.example.com"
+
+
+def test_zra_settings_is_scoped_by_business(conn):
+    db.save_zra_settings(conn, "biz-a", "https://a.example.com", "u", "p", "t", "b", "d")
+    assert db.get_zra_settings(conn, "biz-b") is None
+
+
 def test_adjust_stock_applies_delta(conn, catalog_df):
     db.save_catalog(conn, catalog_df, "biz")
     db.adjust_stock(conn, "biz", "COKE-24", -10)

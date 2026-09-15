@@ -114,6 +114,23 @@ CREATE TABLE IF NOT EXISTS stock_adjustments (
     adjusted_at     TEXT NOT NULL,
     PRIMARY KEY (business, adjustment_id)
 );
+
+-- Phase 11 ("ZRA Smart Invoice fiscalization"): one business's VSDC
+-- (Virtual Sales Data Controller) credentials - see reconciler/zra.py.
+-- No table for "businesses" existed before this; business has always
+-- just been a scoping string on every other table. This is the first
+-- thing that needed genuine per-business configuration rather than
+-- being derivable from data already on hand.
+CREATE TABLE IF NOT EXISTS zra_settings (
+    business        TEXT NOT NULL,
+    server_url      TEXT NOT NULL,  -- VSDC host - taxpayer/vendor-specific, never a fixed constant, see zra.py
+    username        TEXT NOT NULL,
+    password        TEXT NOT NULL,  -- stored in plain SQLite, same threat model as customer phone numbers already in this DB - see README's local-only deployment note
+    tpin            TEXT NOT NULL,
+    bhf_id          TEXT NOT NULL,
+    device_serial   TEXT NOT NULL,
+    PRIMARY KEY (business)
+);
 """
 
 # Aging buckets, in days-outstanding order. Standard AR convention.
@@ -148,6 +165,10 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # Commerce Catalog feed needs that a plain reconciliation catalog never
     # did - see reconciler/loaders.py's CATALOG_OPTIONAL_ALIASES.
     _ensure_columns(conn, "products", {"description": "TEXT", "image_url": "TEXT"})
+    # Phase 11: nullable on purpose, and NOT filled with a guessed default -
+    # see reconciler/zra.py's build_sales_payload(), which refuses to
+    # fiscalize any invoice containing a product missing either of these.
+    _ensure_columns(conn, "products", {"vat_category_code": "TEXT", "item_class_code": "TEXT"})
     conn.commit()
     return conn
 
@@ -339,13 +360,20 @@ def aging_report(conn: sqlite3.Connection, business: str, as_of: date | None = N
 
 def save_catalog(conn: sqlite3.Connection, catalog_df: pd.DataFrame, business: str) -> None:
     """Upserts a product catalog (product_id, name, unit, unit_price,
-    quantity_on_hand, description, image_url). Re-importing the same
-    catalog later updates price/stock rather than duplicating products -
-    same upsert-by-business-scoped-key pattern as save_run() uses for
-    invoices. description/image_url use getattr rather than direct
-    attribute access: callers that built catalog_df by hand (tests, mostly)
-    predate these two columns and don't have them - that's fine, they just
-    save as NULL, same as a catalog file that never had those columns."""
+    quantity_on_hand, description, image_url). Deliberately does NOT
+    touch vat_category_code/item_class_code (Phase 11) even on a
+    re-import - those are never bulk-supplied via a catalog CSV, only
+    set one product at a time via update_product_tax_fields(), so a
+    routine catalog re-import can never silently wipe a value someone
+    set deliberately for ZRA fiscalization.
+
+    Re-importing the same catalog later updates price/stock rather than
+    duplicating products - same upsert-by-business-scoped-key pattern as
+    save_run() uses for invoices. description/image_url use getattr
+    rather than direct attribute access: callers that built catalog_df by
+    hand (tests, mostly) predate these two columns and don't have them -
+    that's fine, they just save as NULL, same as a catalog file that
+    never had those columns."""
     conn.executemany(
         """INSERT INTO products (business, product_id, name, unit, unit_price,
                                   quantity_on_hand, description, image_url)
@@ -366,13 +394,14 @@ def save_catalog(conn: sqlite3.Connection, catalog_df: pd.DataFrame, business: s
 
 def get_catalog(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
     df = pd.read_sql_query(
-        "SELECT product_id, name, unit, unit_price, quantity_on_hand, description, image_url "
+        "SELECT product_id, name, unit, unit_price, quantity_on_hand, description, image_url, "
+        "vat_category_code, item_class_code "
         "FROM products WHERE business = ? ORDER BY product_id",
         conn, params=(business,),
     )
     # Same NaN-reads-back-truthy normalization stock_history() already
     # needed for its own nullable TEXT column - see its docstring.
-    for col in ("description", "image_url"):
+    for col in ("description", "image_url", "vat_category_code", "item_class_code"):
         df[col] = df[col].astype(object).where(df[col].notna(), None)
     return df
 
@@ -393,6 +422,60 @@ def update_product_details(conn: sqlite3.Connection, business: str, product_id: 
         return False
     conn.commit()
     return True
+
+
+def update_product_tax_fields(conn: sqlite3.Connection, business: str, product_id: str,
+                               vat_category_code: str | None, item_class_code: str | None) -> bool:
+    """Sets the two fields reconciler/zra.py's build_sales_payload()
+    requires before an invoice containing this product can be
+    fiscalized - kept as its own function, deliberately separate from
+    update_product_details(), so a catalog CSV re-import (save_catalog())
+    can never touch these by accident. Blank clears to NULL, same
+    convention as every other optional-field setter in this module.
+    Returns False if the product doesn't exist for this business."""
+    cursor = conn.execute(
+        "UPDATE products SET vat_category_code = ?, item_class_code = ? "
+        "WHERE business = ? AND product_id = ?",
+        (_none_if_blank(vat_category_code), _none_if_blank(item_class_code), business, product_id),
+    )
+    if cursor.rowcount == 0:
+        return False
+    conn.commit()
+    return True
+
+
+def save_zra_settings(conn: sqlite3.Connection, business: str, server_url: str, username: str,
+                       password: str, tpin: str, bhf_id: str, device_serial: str) -> None:
+    """Upserts one business's ZRA VSDC credentials - see zra_settings'
+    own schema comment for the plaintext-password caveat. All fields
+    required: a half-configured business should fail loudly at
+    fiscalization time (get_zra_settings() returns None), not submit a
+    request with a blank tpin."""
+    conn.execute(
+        """INSERT INTO zra_settings (business, server_url, username, password, tpin, bhf_id, device_serial)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (business) DO UPDATE SET
+               server_url = excluded.server_url,
+               username = excluded.username,
+               password = excluded.password,
+               tpin = excluded.tpin,
+               bhf_id = excluded.bhf_id,
+               device_serial = excluded.device_serial""",
+        (business, server_url, username, password, tpin, bhf_id, device_serial),
+    )
+    conn.commit()
+
+
+def get_zra_settings(conn: sqlite3.Connection, business: str) -> dict | None:
+    row = conn.execute(
+        "SELECT server_url, username, password, tpin, bhf_id, device_serial "
+        "FROM zra_settings WHERE business = ?",
+        (business,),
+    ).fetchone()
+    if row is None:
+        return None
+    keys = ["server_url", "username", "password", "tpin", "bhf_id", "device_serial"]
+    return dict(zip(keys, row))
 
 
 def adjust_stock(conn: sqlite3.Connection, business: str, product_id: str, delta: int,

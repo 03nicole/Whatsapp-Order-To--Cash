@@ -384,6 +384,89 @@ matching path. No live Flutterwave account exists - built and tested
 against Flutterwave's real public documentation, the same "prove it
 without live credentials first" pattern already used for WhatsApp.
 
+### ZRA Smart Invoice fiscalization — Phase 11, built, deliberately scoped
+
+Zambia's e-invoicing system, **Smart Invoice**, has been mandatory for
+VAT-registered taxpayers since July 2024 (launched March 2024,
+Continuous Transaction Controls architecture, replacing the earlier
+Electronic Fiscal Device regime). Taxpayers connect their own invoicing
+software to it through a **Virtual Sales Data Controller (VSDC)** - a
+REST/JSON API, either run locally (ZRA distributes it as a downloadable
+WAR/JAR file via the Smart Invoice Taxpayer Portal) or provided by a
+certified third-party vendor's hosted instance. Either way, the exact
+host is taxpayer/vendor-specific - there is no single fixed ZRA cloud
+endpoint this system could hardcode.
+
+**Sourcing note:** ZRA's own VSDC API Specification PDF (v1.0.7,
+`zra.org.zm/wp-content/uploads/2024/08/VSDC-API-Specification-Document-v1.0.7-1.pdf`)
+was not fetchable directly (TLS certificate error on zra.org.zm at
+research time). The endpoint paths, payload field names, and auth flow
+`reconciler/zra.py` is built against instead come from a real,
+actively-maintained open-source VSDC integration
+([github.com/CrystalisedApps/ca-erpnext-zra](https://github.com/CrystalisedApps/ca-erpnext-zra),
+an ERPNext plugin built against that same ZRA spec) - cloned and read
+directly (not just its README) to confirm the real route table
+(`fixtures/crystal_smart_invoice_routes.json`) and payload construction
+(`utils/payload_utils.py`'s `build_invoice_payload()`), cross-checked
+against independent search results confirming the same architecture. No
+live ZRA account or sandbox exists to test against - the same "prove it
+against a real documented shape, no live credentials" position already
+taken with Flutterwave and the WhatsApp webhook.
+
+**Confirmed real, from that source:**
+- Auth: `POST {server_url}/api/v1/Users/GetToken`, form-encoded
+  `{username, password}` → `{"Result": {"token": "..."}, "expires_in": ...}`,
+  used as a Bearer token on every subsequent request.
+- Device init (one-time per device): `POST /api/v1/InitializationInfo/selectInitInfo`
+  with `{tpin, bhfId, dvcSrlNo}`. Result code `"000"` = success, `"902"` =
+  already initialized (both fine); anything else is a real failure.
+- Sale submission: `POST /api/v1/SalesInformation/saveSales` with a
+  payload keyed by `tpin`, `bhfId`, `cisInvcNo` (invoice number),
+  `salesDt`, `custTpin`/`custNm`, `totAmt`/`totTaxAmt`/`totTaxblAmt`, and
+  an `itemList[]` of `{itemSeq, itemCd, itemNm, itemClsCd, qty,
+  qtyUnitCd, prc, splyAmt, vatAmt, totAmt, vatTaxblAmt, vatCatCd}`.
+- Related endpoints the same route table confirms exist but this phase
+  doesn't call yet: `ItemsClassInformation/selectItemsClass` and
+  `CodeData/selectCodes` (ZRA's own reference tables for item
+  classification codes and standard codes like units-of-measure -
+  fetching and caching these properly is real future work, not
+  something to hand-populate from a guess).
+
+**Why this was scoped to a transport layer only, not a full
+integration**, decided via a mid-build check-in once the real shape of
+the work became clear (see [ROADMAP.md](ROADMAP.md)'s Phase 11 entry):
+this system's data model had zero VAT/tax modeling of any kind before
+this phase - no per-product tax category, no ZRA item classification
+code, no TPIN storage anywhere, and critically, **no verified source for
+what most of ZRA's own VAT category codes (A, B, C1-C3, D, E, F, IPL1-2,
+TL, RVAT) actually mean or what rate each one carries** beyond the two
+best-established facts: Zambia's standard VAT rate is 16% (category
+`"A"`, consistently corroborated across independent sources including
+PwC's VAT-in-Africa country guide), and a zero-rated/exempt supply is by
+definition taxed at 0% regardless of the exact subcode. Guessing at the
+rest - inventing a plausible-looking `itemClsCd` or assuming an
+unfamiliar VAT category's rate - would be fabricating data with real
+legal weight if it were ever pointed at a live ZRA sandbox, a
+categorically worse failure mode than this project's usual "flag it for
+a human" response to ambiguity. So `reconciler/zra.py`'s
+`build_sales_payload()` refuses outright (`ZRAConfigError`) rather than
+guesses:
+- any invoice containing a product missing `vat_category_code` or
+  `item_class_code` (two new nullable `products` columns, `db.py`'s
+  `update_product_tax_fields()` - deliberately kept out of the bulk
+  catalog-CSV-import path, so a routine re-import can never silently
+  wipe a value someone set deliberately);
+- any `vat_category_code` outside `{"A", "C1", "C2", "C3", "D"}` - the
+  only ones this module computes a rate for.
+
+**What's genuinely still missing, not attempted here:** no live
+submission route or UI exists in `app.py` yet - there's nothing to point
+it at. Wiring fiscalization into the order-confirmation or
+reconciliation flow means deciding *when* it should fire (at order time?
+at payment time?) and what happens on a ZRA rejection, which needs a
+real pilot customer's actual compliance workflow to design against, not
+assumptions - see [ROADMAP.md](ROADMAP.md)'s Phase 11 follow-up entry.
+
 ## 8. Security & trust considerations
 
 - **WhatsApp webhook signature verification.** Meta signs webhook payloads
