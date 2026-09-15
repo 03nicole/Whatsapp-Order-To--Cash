@@ -9,11 +9,21 @@ balance is consumed in the same sequence the payments actually happened):
      open invoices matches the amount                     -> high confidence
   3. Sender identified + amount matches a *combination* of
      their open invoices (multi-invoice payment)           -> needs review
+  3b. One invoice cited/identified is fully covered and the leftover is a
+      full/partial credit toward exactly one other open invoice of the
+      same customer (a "split payment")                    -> needs review
   4. Amount is unique across ALL open invoices, but sender
      could not be identified                                -> needs review
      (never auto-confirmed on amount alone — two customers can owe the
      same amount, so this always goes to a human)
   5. Nothing matches                                         -> unmatched
+
+Split payments (3b) are always flagged, never auto-applied — even the
+"obviously covered" invoice's balance is left untouched, same as every other
+needs_review outcome, since a human might reject the whole suggestion. When
+more than one (primary, secondary) invoice pairing could explain the amount,
+it's left ambiguous rather than guessed at, exactly like the amount-only
+rules below.
 
 Two extension points are deliberately left as stubs, not built yet:
   - `customer_historical_pattern()` — once you have months of confirmed
@@ -118,8 +128,28 @@ def reconcile(invoices_df: pd.DataFrame, momo_df: pd.DataFrame,
                                           extra={"invoice_total": invoices.at[inv_idx, "amount"],
                                                  "remaining_balance": invoices.at[inv_idx, "balance"]}))
                 continue
-            # amount > balance: invoice number matched but overpaid — likely
-            # this payment also covers another invoice. Flag for a human.
+            # amount > balance: invoice number matched but overpaid. Might be a
+            # split payment - this transfer fully covers `inv_id` and the
+            # leftover is a credit toward another of the same customer's open
+            # invoices. Never auto-applied (see _find_split_payment_candidate)
+            # - always flagged for a human, just with a concrete suggestion
+            # instead of a bare "overpaid" message when one clean candidate
+            # exists.
+            remainder = round(amount - balance, 2)
+            customer_name = invoices.at[inv_idx, "customer_name"]
+            split = _find_split_payment_candidate(invoices, customer_name, inv_idx,
+                                                    remainder, txn["date"])
+            if split is not None:
+                other_idx, other_balance = split
+                other_id = invoices.at[other_idx, "invoice_id"]
+                review_rows.append(_row(
+                    txn, inv_id, customer_name, "invoice_number_split_payment_candidate",
+                    extra={"invoice_balance": balance,
+                           "candidate_invoices": f"{inv_id} (full, {balance:.2f}) + "
+                                                  f"{other_id} (remainder {remainder:.2f} of "
+                                                  f"{other_balance:.2f} owed)"}))
+                continue
+
             review_rows.append(_row(txn, inv_id, invoices.at[inv_idx, "customer_name"],
                                      "invoice_number_but_amount_exceeds_balance",
                                      extra={"invoice_balance": balance}))
@@ -164,6 +194,26 @@ def reconcile(invoices_df: pd.DataFrame, momo_df: pd.DataFrame,
                     txn, "+".join(combo_hit), candidates.at[candidates.index[0], "customer_name"],
                     "sender_identified_multi_invoice_combo",
                     extra={"candidate_invoices": ", ".join(combo_hit)}))
+                continue
+
+            # Rule 3b: split payment - fully covers one of this customer's
+            # open invoices, and the remainder is a full/partial credit
+            # toward exactly one other. (combo_hit above already catches the
+            # case where both invoices are paid exactly in full - this only
+            # fires when combo_hit found nothing, i.e. the remainder is a
+            # genuine partial.) Still needs_review - never auto-applied.
+            split_pair = _find_split_pair(candidates, txn["amount"])
+            if split_pair is not None:
+                primary_idx, secondary_idx, remainder = split_pair
+                primary_id = invoices.at[primary_idx, "invoice_id"]
+                secondary_id = invoices.at[secondary_idx, "invoice_id"]
+                review_rows.append(_row(
+                    txn, primary_id, candidates.at[candidates.index[0], "customer_name"],
+                    "sender_identified_split_payment_candidate",
+                    extra={"candidate_invoices":
+                           f"{primary_id} (full, {invoices.at[primary_idx, 'balance']:.2f}) + "
+                           f"{secondary_id} (remainder {remainder:.2f} of "
+                           f"{invoices.at[secondary_idx, 'balance']:.2f} owed)"}))
                 continue
 
             # Sender known, but amount doesn't cleanly resolve -> human review
@@ -228,6 +278,56 @@ def _resolve_duplicate_invoice_id(invoices: pd.DataFrame, inv_id: str, amount: f
     if exact:
         return exact[0]
     return min(open_matches, key=lambda i: invoices.at[i, "date"])
+
+
+def _find_split_payment_candidate(invoices: pd.DataFrame, customer_name: str, exclude_idx: int,
+                                   remainder: float, as_of_date) -> tuple[int, float] | None:
+    """After a reference-cited invoice is fully covered, does the leftover
+    `remainder` fully or partially cover exactly one of the SAME customer's
+    other open invoices? Returns (invoice_index, that invoice's balance) only
+    when there is exactly one such candidate - multiple candidates are just
+    as ambiguous as the amount-only rules elsewhere, so they're left for a
+    human rather than guessed at. Never mutates `invoices`."""
+    if remainder < 0.01:
+        return None
+    same_customer = invoices[
+        (invoices.index != exclude_idx) &
+        (invoices["balance"] > 0) &
+        (invoices["customer_name"].str.strip().str.lower() == str(customer_name).strip().lower()) &
+        (invoices["date"] <= as_of_date)
+    ]
+    covers_remainder = same_customer[same_customer["balance"] >= remainder - 0.01]
+    if len(covers_remainder) == 1:
+        idx = covers_remainder.index[0]
+        return idx, invoices.at[idx, "balance"]
+    return None
+
+
+def _find_split_pair(candidates: pd.DataFrame, amount: float) -> tuple[int, int, float] | None:
+    """Applies `amount` to one identified customer's open invoices oldest
+    first (the standard AR convention - also how _resolve_duplicate_invoice_id
+    breaks ties elsewhere in this module), and checks whether that lands in
+    exactly the shape of a split payment: the oldest invoice fully covered,
+    with a full/partial credit left for the next-oldest. Note that "does the
+    amount happen to cover invoice A fully with leftover for invoice B" is
+    symmetric in A and B (A+B >= amount either way round) - picking oldest
+    as primary rather than searching all orderings avoids reporting two
+    equally 'valid' but contradictory suggestions. Returns
+    (primary_idx, secondary_idx, remainder), or None if the amount doesn't
+    land in exactly that two-invoice shape (covers three+ invoices, doesn't
+    fully cover even the oldest, or overshoots the second invoice too -
+    that's combo/overpay territory, not this rule)."""
+    if len(candidates) < 2:
+        return None
+    ordered = candidates.sort_values("date")
+    primary_idx, primary_balance = ordered.index[0], ordered["balance"].iloc[0]
+    secondary_idx, secondary_balance = ordered.index[1], ordered["balance"].iloc[1]
+    if primary_balance >= amount - 0.01:
+        return None  # doesn't even fully cover the oldest invoice
+    remainder = round(amount - primary_balance, 2)
+    if remainder >= secondary_balance - 0.01:
+        return None  # remainder covers the next invoice too - not a partial credit
+    return primary_idx, secondary_idx, remainder
 
 
 def _find_combo_match(candidates: pd.DataFrame, amount: float, max_size: int = 4) -> list[str] | None:

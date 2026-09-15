@@ -69,6 +69,70 @@ def test_rule1_overpay_flags_for_review_instead_of_auto_matching(make_invoices, 
     assert result["all_invoices"].loc[0, "balance"] == 1000
 
 
+# --- Rule 1b: split payment via a cited invoice --------------------------
+
+def test_rule1_overpay_with_exact_remainder_suggests_split(make_invoices, make_momo):
+    invoices = make_invoices([
+        dict(invoice_id="INV-1", customer_name="ABC", amount=2750, date="2026-01-01"),
+        dict(invoice_id="INV-2", customer_name="ABC", amount=1250, date="2026-01-02"),
+    ])
+    momo = make_momo([dict(transaction_id="T1", amount=4000, reference="INV-1 settlement",
+                            date="2026-01-03")])
+    result = reconcile(invoices, momo)
+    row = result["needs_review"].iloc[0]
+    assert row["match_rule"] == "invoice_number_split_payment_candidate"
+    assert "INV-1" in row["candidate_invoices"]
+    assert "INV-2" in row["candidate_invoices"]
+    # nothing is auto-applied - both invoices' balances are untouched, same
+    # as every other needs_review outcome, until a human confirms.
+    assert set(result["all_invoices"]["balance"]) == {2750, 1250}
+
+
+def test_rule1_overpay_with_partial_remainder_suggests_split(make_invoices, make_momo):
+    invoices = make_invoices([
+        dict(invoice_id="INV-1", customer_name="ABC", amount=2750, date="2026-01-01"),
+        dict(invoice_id="INV-2", customer_name="ABC", amount=5000, date="2026-01-02"),
+    ])
+    momo = make_momo([dict(transaction_id="T1", amount=4000, reference="INV-1 settlement",
+                            date="2026-01-03")])
+    result = reconcile(invoices, momo)
+    row = result["needs_review"].iloc[0]
+    assert row["match_rule"] == "invoice_number_split_payment_candidate"
+    assert "remainder 1250.00 of 5000.00 owed" in row["candidate_invoices"]
+
+
+def test_rule1_overpay_falls_back_to_generic_flag_when_no_other_invoice(make_invoices, make_momo):
+    invoices = make_invoices([dict(invoice_id="INV-1", customer_name="ABC", amount=1000)])
+    momo = make_momo([dict(transaction_id="T1", amount=1500, reference="INV-1 payment")])
+    result = reconcile(invoices, momo)
+    assert result["needs_review"].iloc[0]["match_rule"] == "invoice_number_but_amount_exceeds_balance"
+
+
+def test_rule1_overpay_falls_back_to_generic_flag_when_remainder_ambiguous(make_invoices, make_momo):
+    """Two other open invoices for the same customer could each absorb the
+    remainder - genuinely ambiguous, so no split is suggested."""
+    invoices = make_invoices([
+        dict(invoice_id="INV-1", customer_name="ABC", amount=1000, date="2026-01-01"),
+        dict(invoice_id="INV-2", customer_name="ABC", amount=5000, date="2026-01-02"),
+        dict(invoice_id="INV-3", customer_name="ABC", amount=5000, date="2026-01-02"),
+    ])
+    momo = make_momo([dict(transaction_id="T1", amount=1500, reference="INV-1 payment",
+                            date="2026-01-03")])
+    result = reconcile(invoices, momo)
+    assert result["needs_review"].iloc[0]["match_rule"] == "invoice_number_but_amount_exceeds_balance"
+
+
+def test_rule1_split_candidate_ignores_a_different_customers_invoice(make_invoices, make_momo):
+    invoices = make_invoices([
+        dict(invoice_id="INV-1", customer_name="ABC", amount=2750, date="2026-01-01"),
+        dict(invoice_id="INV-2", customer_name="XYZ", amount=1250, date="2026-01-02"),
+    ])
+    momo = make_momo([dict(transaction_id="T1", amount=4000, reference="INV-1 settlement",
+                            date="2026-01-03")])
+    result = reconcile(invoices, momo)
+    assert result["needs_review"].iloc[0]["match_rule"] == "invoice_number_but_amount_exceeds_balance"
+
+
 # --- Rule 2: sender identified + exact/partial amount -------------------
 
 def test_rule2_sender_identified_by_phone_exact_amount(make_invoices, make_momo):
@@ -139,6 +203,48 @@ def test_rule3_combo_match_flagged_for_review(make_invoices, make_momo):
     assert set(row["candidate_invoices"].split(", ")) == {"INV-1", "INV-2"}
     # combo match never touches balances - a human confirms first.
     assert set(result["all_invoices"]["balance"]) == {600, 400}
+
+
+def test_rule3b_split_pair_suggested_when_combo_does_not_match_exactly(make_invoices, make_momo):
+    """Sender identified, amount fully covers one invoice and partially
+    covers a second - combo_hit only catches exact sums, so this is the
+    genuinely new case split-payment detection is for."""
+    invoices = make_invoices([
+        dict(invoice_id="INV-1", customer_name="ABC", customer_phone="0977111111",
+             amount=600, date="2026-01-01"),
+        dict(invoice_id="INV-2", customer_name="ABC", customer_phone="0977111111",
+             amount=850, date="2026-01-02"),
+    ])
+    momo = make_momo([
+        dict(transaction_id="T1", amount=900, sender_phone="0977111111",
+             reference="combined payment", date="2026-01-03"),
+    ])
+    result = reconcile(invoices, momo)
+    row = result["needs_review"].iloc[0]
+    assert row["match_rule"] == "sender_identified_split_payment_candidate"
+    assert "INV-1" in row["candidate_invoices"]
+    assert "INV-2" in row["candidate_invoices"]
+    assert "remainder 300.00 of 850.00 owed" in row["candidate_invoices"]
+    # never auto-applied
+    assert set(result["all_invoices"]["balance"]) == {600, 850}
+
+
+def test_rule3b_falls_back_when_remainder_also_overshoots_the_next_invoice(make_invoices, make_momo):
+    """The remainder after fully covering the oldest invoice is bigger than
+    even the next-oldest invoice's balance - that's 3+-invoice territory,
+    not a clean one-full-plus-one-partial split, so no suggestion is made."""
+    invoices = make_invoices([
+        dict(invoice_id="INV-1", customer_name="ABC", customer_phone="0977111111",
+             amount=600, date="2026-01-01"),
+        dict(invoice_id="INV-2", customer_name="ABC", customer_phone="0977111111",
+             amount=250, date="2026-01-02"),
+    ])
+    momo = make_momo([
+        dict(transaction_id="T1", amount=1000, sender_phone="0977111111",
+             reference="combined payment", date="2026-01-03"),
+    ])
+    result = reconcile(invoices, momo)
+    assert result["needs_review"].iloc[0]["match_rule"] == "sender_identified_amount_ambiguous"
 
 
 def test_rule3_ambiguous_sender_amount_falls_to_review(make_invoices, make_momo):
@@ -251,7 +357,7 @@ def test_sample_data_reconciles_to_expected_outcome_counts():
     assert rules["TXN00980"] == "sender_identified_exact_amount"
     assert rules["TXN00981"] == "invoice_number_exact_amount"
     assert rules["TXN00901"] == "sender_identified_partial_amount"
-    assert rules["TXN00915"] == "invoice_number_but_amount_exceeds_balance"
+    assert rules["TXN00915"] == "invoice_number_split_payment_candidate"
     assert rules["TXN00920"] == "sender_identified_multi_invoice_combo"
     assert rules["TXN00958"] == "amount_only_multiple_candidates_ambiguous"
     assert rules["TXN00966"] is None  # unmatched

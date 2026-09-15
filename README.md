@@ -22,6 +22,15 @@ The matching is a **deterministic rules waterfall**, not machine learning:
    flagged, explicitly, rather than silently dumped into "unmatched"
 6. Nothing matches → unmatched
 
+There's also a **split-payment detector** layered onto rules 1 and 3: when a
+transfer overpays one cited/identified invoice, it checks whether the
+leftover cleanly covers (in full or in part) exactly one other open invoice
+for the same customer, and — if so — names both invoices and the leftover
+amount in the review sheet's Details column, instead of a bare "amount
+exceeds balance" message. It's still `needs_review`, never auto-applied —
+same as every other flagged case here — it just gives the human a concrete
+starting point instead of nothing.
+
 This mirrors the plan discussed: rules first, because you don't have enough
 labelled data for ML yet, and because a wrong automatic match is much more
 expensive to a business than a transaction sitting in "needs review" for a
@@ -64,11 +73,12 @@ writes a two-sheet Excel report (`--output`, default `aging_report.xlsx`).
 Both inputs accept `.csv` or `.xlsx`. Try it on the sample data first — it's
 built to exercise every rule at once (an exact match, a two-part partial
 payment, a combined payment across two invoices, an overpayment against a
-cited invoice, a genuinely ambiguous case where two customers owe the same
-amount, and two invoices that were accidentally issued under the same
-invoice number — resolved correctly by balance rather than file order) so
-you can see what each outcome looks like before you're staring at a real
-customer's messy export.
+cited invoice that turns out to be a clean split-payment candidate against
+that customer's other open invoice, a genuinely ambiguous case where two
+customers owe the same amount, and two invoices that were accidentally
+issued under the same invoice number — resolved correctly by balance rather
+than file order) so you can see what each outcome looks like before you're
+staring at a real customer's messy export.
 
 ## Tests
 
@@ -105,11 +115,14 @@ you've now made the tool handle.
 - **Combination matching is capped at 4 invoices** for performance
   (`_find_combo_match(max_size=4)` in `matcher.py`). Fine for now; revisit
   if a real customer routinely pays 5+ invoices in one transfer.
-- **A payment can only be matched, once, to one thing.** There's no support
-  yet for a single transaction being split across matched + partial (e.g.
-  paying one invoice in full and leaving a partial credit toward another).
-  That will show up as a "needs review — amount exceeds balance" case
-  instead. Track how often this actually happens before building for it.
+- **A payment can only be matched, once, to one thing.** A single
+  transaction is never auto-applied across two invoices — split payments
+  (paying one invoice in full and leaving a partial credit toward another)
+  are *detected* and named in the review sheet when there's exactly one
+  clean candidate (see "split-payment detector" above), but a human still
+  has to confirm and apply it. Genuinely three-way splits, or cases where
+  more than one invoice could plausibly absorb the leftover, still fall
+  back to a generic review flag rather than a guess.
 - **This does not touch money.** It only reads a statement export and an
   invoice list — it never initiates, holds, or confirms a payment on its
   own. Keep it that way for as long as possible; it's a much easier thing
