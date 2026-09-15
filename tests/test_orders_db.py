@@ -112,6 +112,20 @@ def test_adjust_stock_logs_every_change(conn, catalog_df):
     assert history.iloc[1]["delta"] == -10
 
 
+def test_stock_history_reports_a_missing_reason_as_none_not_nan(conn, catalog_df):
+    """Regression test: found live, by actually looking at the catalog
+    page's rendered history table. A NULL reason reads back from SQLite
+    as float NaN even in pandas' nullable string dtype - and NaN is
+    truthy in Python, so a template's `{{ h.reason or '' }}` rendered
+    the literal text "nan" in the browser instead of a blank cell."""
+    db.save_catalog(conn, catalog_df, "biz")
+    db.adjust_stock(conn, "biz", "COKE-24", -5)  # no reason given
+
+    reason = db.stock_history(conn, "biz").iloc[0]["reason"]
+    assert reason is None
+    assert not (isinstance(reason, float))  # specifically not NaN
+
+
 def test_stock_history_filters_by_product(conn, catalog_df):
     db.save_catalog(conn, catalog_df, "biz")
     db.adjust_stock(conn, "biz", "COKE-24", -5)

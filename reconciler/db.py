@@ -393,7 +393,15 @@ def stock_history(conn: sqlite3.Connection, business: str, product_id: str | Non
         query += " AND product_id = ?"
         params.append(product_id)
     query += " ORDER BY adjusted_at DESC, rowid DESC"
-    return pd.read_sql_query(query, conn, params=params)
+    df = pd.read_sql_query(query, conn, params=params)
+    # A NULL reason reads back as float NaN even in pandas' nullable
+    # string dtype - and NaN is truthy in Python, so a template's
+    # `{{ h.reason or '' }}` renders the literal text "nan" instead of a
+    # blank cell. Found live, by actually looking at the catalog page's
+    # rendered history table, not by inspection. Normalize to a real
+    # None so every caller's already-correct `or` fallback just works.
+    df["reason"] = df["reason"].astype(object).where(df["reason"].notna(), None)
+    return df
 
 
 def save_order(conn: sqlite3.Connection, business: str, order: dict, lines: list[dict]) -> None:
