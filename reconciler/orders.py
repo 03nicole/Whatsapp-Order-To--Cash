@@ -60,8 +60,19 @@ class ParsedOrder:
 
 
 def _split_segments(message: str) -> list[str]:
+    """Splits on commas/newlines into candidate order lines, then drops
+    any segment that doesn't even start with a quantity number. A real
+    customer's message usually isn't just order lines - "Hi, please can
+    I get: 5x COKE-24" - and a segment with no leading quantity was never
+    an attempt at "<qty> <product>" under this waterfall's own grammar,
+    so treating it as an unresolvable product (and flagging the whole
+    order for it) was flagging on conversational filler, not on genuine
+    order ambiguity. Found live: a real free-text order with a greeting
+    got flagged for exactly this reason. A segment that DOES start with
+    a quantity but still fails to resolve to a product is untouched by
+    this - that's still genuine ambiguity the waterfall must flag."""
     parts = re.split(r"[,\n]", message)
-    return [p.strip() for p in parts if p.strip()]
+    return [p.strip() for p in parts if p.strip() and _LINE_RE.match(p.strip())]
 
 
 def _resolve_product(reference: str, catalog: pd.DataFrame):
@@ -93,15 +104,11 @@ def parse_order_message(message: str, catalog: pd.DataFrame) -> ParsedOrder:
     and returns a result dict rather than writing to a DB itself."""
     segments = _split_segments(message)
     if not segments:
-        return ParsedOrder(lines=[], status="flagged", flag_reason="empty or unparseable message")
+        return ParsedOrder(lines=[], status="flagged", flag_reason="no order lines found in message")
 
     lines: list[ParsedLine] = []
     for segment in segments:
-        m = _LINE_RE.match(segment)
-        if not m:
-            lines.append(ParsedLine(raw_text=segment, resolution="unknown_product"))
-            continue
-        qty_text, reference = m.groups()
+        qty_text, reference = _LINE_RE.match(segment).groups()
         product_id, product_name, unit_price, resolution = _resolve_product(reference, catalog)
         quantity = int(qty_text)
         line_total = round(quantity * unit_price, 2) if unit_price is not None else None

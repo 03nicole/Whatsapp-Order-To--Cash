@@ -135,9 +135,13 @@ def test_unknown_product_flags_the_whole_order(catalog):
     assert "unknown_product" in order.flag_reason
 
 
-def test_unparseable_segment_flags_the_whole_order(catalog):
+def test_message_with_no_order_lines_flags(catalog):
+    """No segment even starts with a quantity number, so none look like
+    an order line attempt at all - flagged for having no order lines,
+    not for a false per-segment "unknown_product" ambiguity."""
     order = parse_order_message("please send stock soon", catalog)
     assert order.status == "flagged"
+    assert order.lines == []
 
 
 def test_one_bad_line_flags_the_whole_order_not_just_that_line(catalog):
@@ -155,6 +159,18 @@ def test_empty_message_flags(catalog):
     order = parse_order_message("   ", catalog)
     assert order.status == "flagged"
     assert order.lines == []
+
+
+def test_greeting_before_order_lines_does_not_flag_the_order(catalog):
+    """Regression test: found live, sending a real webhook payload
+    shaped like an actual customer message. A greeting segment has no
+    leading quantity number, so it's not a genuine ambiguous product -
+    it should be dropped, not treated as an unresolvable line that
+    flags the whole order."""
+    order = parse_order_message("Hi, please can I get:\n5x COKE-24\n3 FANTA-24", catalog)
+    assert order.status == "confirmed"
+    assert order.amount == 5 * 120.0 + 3 * 110.0
+    assert [l.resolution for l in order.lines] == ["exact_code", "exact_code"]
 
 
 # --- check_stock -----------------------------------------------------------
