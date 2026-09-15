@@ -26,6 +26,7 @@ the line is and why. Full system analysis:
 - [Architecture](docs/ARCHITECTURE.md) — component design, reference systems (Wasoko, Twiga Foods, Safaricom Daraja/M-Pesa, EU PEPPOL/EN16931), tech stack decisions
 - [Data model](docs/DATA_MODEL.md) — entity-relationship diagram, how new entities extend this repo's existing schema
 - [Roadmap](docs/ROADMAP.md) — phased plan with explicit validation gates per phase
+- [Validation interview guide](docs/VALIDATION_INTERVIEW_GUIDE.md) — how to actually run the distributor interviews the roadmap gates Phase 7+ on
 
 ## Why it's built this way
 
@@ -229,6 +230,10 @@ you've now made the tool handle.
   is explicitly deferred — see `docs/DATA_MODEL.md`.
 
 ## What the interviews should tell you before you build past this
+
+See [`docs/VALIDATION_INTERVIEW_GUIDE.md`](docs/VALIDATION_INTERVIEW_GUIDE.md)
+for the actual interview structure, screening questions, and scoring —
+this section is just the criteria it operationalizes.
 
 Per the original validation plan: don't extend this into inventory or
 delivery until you've watched a few real distributors reconcile their own

@@ -69,7 +69,11 @@ necessary, or ZRA enforcement makes it unavoidable.
 ## Validation gates
 
 Two different kinds of validation are in play, and it's worth being
-explicit about which one has actually happened for which decision:
+explicit about which one has actually happened for which decision. See
+[VALIDATION_INTERVIEW_GUIDE.md](VALIDATION_INTERVIEW_GUIDE.md) for how to
+actually go run the direct field validation described below - not just
+the criteria, but the interview structure, scoring, and what to do with
+the result per prospect.
 
 1. **Market-level validation** (funded regional comps — Wasoko, Twiga,
    Chpter, Sukhiba — plus the Smart Invoice regulatory tailwind and the
