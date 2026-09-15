@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Aging — {{ business or "Reconciliation Engine" }}{% endblock %}
+{% block content %}
+  <section class="card">
+    <h2>Accounts receivable aging</h2>
+    <form action="{{ url_for('aging') }}" method="get">
+      <label>
+        Business name
+        <input type="text" name="business" list="business-list" value="{{ business or '' }}" required>
+        <datalist id="business-list">
+          {% for b in businesses %}<option value="{{ b }}">{% endfor %}
+        </datalist>
+      </label>
+      <button type="submit">View aging</button>
+    </form>
+  </section>
+
+  {% if business and rows is defined %}
+  <section class="card">
+    <h2>{{ business }}</h2>
+    <p>Total outstanding: <strong>K{{ "{:,.2f}".format(total_outstanding) }}</strong>
+       across {{ open_count }} open invoice(s)</p>
+    <p><a class="button" href="{{ url_for('download', token=token) }}">Download Excel report</a></p>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Total owed</th>
+          {% for b in bucket_cols %}<th>{{ b }} days</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.customer_name }}</td>
+          <td>K{{ "{:,.2f}".format(row.total_owed) }}</td>
+          {% for b in bucket_cols %}<td>K{{ "{:,.2f}".format(row[b]) }}</td>{% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+  <p><a href="{{ url_for('index') }}">&larr; Back</a></p>
+{% endblock %}

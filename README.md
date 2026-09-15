@@ -82,6 +82,25 @@ issued under the same invoice number — resolved correctly by balance rather
 than file order) so you can see what each outcome looks like before you're
 staring at a real customer's messy export.
 
+## Web UI
+
+A local browser front-end for the same two commands (`cli.py`'s `reconcile`
+and `aging`) - upload the two files, see the outcome counts, download the
+Excel report. No new matching logic lives here; it's a thin wrapper around
+the same `reconciler` package the CLI uses, and shares `reconciliation.db`
+with it.
+
+```bash
+pip install -r requirements-web.txt
+python app.py
+```
+
+Then open http://127.0.0.1:5000. This is meant to be run locally by whoever
+is doing the reconciliation - not deployed as a public-facing service. Set
+`RECONCILIATION_DB` to point it at a different SQLite file (e.g. to keep a
+pilot business's data separate) instead of the default `reconciliation.db`
+next to `app.py`.
+
 ## Tests
 
 ```bash

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Reconcile — Reconciliation Engine{% endblock %}
+{% block content %}
+  <section class="card">
+    <h2>Run a reconciliation</h2>
+    <form action="{{ url_for('do_reconcile') }}" method="post" enctype="multipart/form-data">
+      <label>
+        Business name
+        <input type="text" name="business" list="business-list" placeholder="e.g. Sample Distributor Ltd" required>
+        <datalist id="business-list">
+          {% for b in businesses %}<option value="{{ b }}">{% endfor %}
+        </datalist>
+      </label>
+      <label>
+        Invoices file (.csv or .xlsx)
+        <input type="file" name="invoices" accept=".csv,.xlsx,.xls" required>
+      </label>
+      <label>
+        MoMo statement file (.csv or .xlsx)
+        <input type="file" name="momo_statement" accept=".csv,.xlsx,.xls" required>
+      </label>
+      <label>
+        Date window (days, for amount-only matching)
+        <input type="number" name="date_window" value="45" min="1">
+      </label>
+      <button type="submit">Reconcile</button>
+    </form>
+    <p class="hint">
+      Re-uploading the same invoice file later won't undo a payment a previous
+      run already applied, and re-sending an overlapping statement export
+      won't double-count a transaction — results persist per business name.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Accounts receivable (aging)</h2>
+    <form action="{{ url_for('aging') }}" method="get">
+      <label>
+        Business name
+        <input type="text" name="business" list="business-list" placeholder="e.g. Sample Distributor Ltd" required>
+      </label>
+      <button type="submit">View aging</button>
+    </form>
+    <p class="hint">Who owes you money right now, without re-uploading anything — requires at least one prior reconcile run for that business.</p>
+  </section>
+{% endblock %}

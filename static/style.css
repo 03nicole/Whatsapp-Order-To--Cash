@@ -1,0 +1,109 @@
+:root {
+  --ink: #1f2d33;
+  --muted: #5b6b73;
+  --accent: #1f4e5f;
+  --border: #d8e0e3;
+  --bg-card: #ffffff;
+  --bg-page: #f4f7f8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+  background: var(--bg-page);
+  color: var(--ink);
+}
+
+header {
+  background: var(--accent);
+  padding: 1rem 1.5rem;
+}
+
+header h1 { margin: 0; font-size: 1.25rem; }
+header a { color: #fff; text-decoration: none; }
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.card h2 { margin-top: 0; }
+
+form label {
+  display: block;
+  margin-bottom: 0.9rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+form input {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+button, .button {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 4px;
+  font-size: 1rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+button:hover, .button:hover { opacity: 0.9; }
+
+.hint { color: var(--muted); font-size: 0.85rem; }
+
+.flashes {
+  list-style: none;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1.5rem;
+  background: #fff4e5;
+  border: 1px solid #f0c987;
+  border-radius: 6px;
+  color: #7a4b00;
+}
+
+table { border-collapse: collapse; width: 100%; }
+
+.summary-table th, .summary-table td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.data-table th, .data-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.data-table th:first-child, .data-table td:first-child { text-align: left; }

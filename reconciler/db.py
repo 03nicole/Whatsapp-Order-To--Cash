@@ -78,6 +78,17 @@ def known_balances(conn: sqlite3.Connection, business: str) -> dict[str, float]:
     return dict(rows)
 
 
+def known_businesses(conn: sqlite3.Connection) -> list[str]:
+    """Every distinct business name with at least one persisted run - lets a
+    UI offer a dropdown instead of asking the user to remember/retype the
+    exact string they used last time."""
+    rows = conn.execute(
+        "SELECT DISTINCT business FROM invoices "
+        "UNION SELECT DISTINCT business FROM transactions ORDER BY business"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def known_transaction_ids(conn: sqlite3.Connection, business: str) -> set[str]:
     rows = conn.execute(
         "SELECT transaction_id FROM transactions WHERE business = ?", (business,)

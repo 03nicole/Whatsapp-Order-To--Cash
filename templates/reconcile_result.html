@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Reconciliation result — {{ summary.business }}{% endblock %}
+{% block content %}
+  <section class="card">
+    <h2>Reconciliation complete — {{ summary.business }}</h2>
+    <table class="summary-table">
+      <tbody>
+        <tr><th>Matched</th><td>{{ summary.matched }}</td></tr>
+        <tr><th>Partial</th><td>{{ summary.partial }}</td></tr>
+        <tr><th>Needs review</th><td>{{ summary.needs_review }}</td></tr>
+        <tr><th>Unmatched</th><td>{{ summary.unmatched }}</td></tr>
+        <tr><th>Open invoices remaining</th><td>{{ summary.open_invoices }}</td></tr>
+        {% if summary.skipped %}
+        <tr><th>Skipped (already processed in a previous run)</th><td>{{ summary.skipped }}</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+    <p>
+      <a class="button" href="{{ url_for('download', token=token) }}">Download Excel report</a>
+    </p>
+    <p class="hint">
+      Results are persisted for "{{ summary.business }}" — check
+      <a href="{{ url_for('aging', business=summary.business) }}">the aging view</a>
+      for the current accounts-receivable picture.
+    </p>
+  </section>
+  <p><a href="{{ url_for('index') }}">&larr; Run another reconciliation</a></p>
+{% endblock %}
