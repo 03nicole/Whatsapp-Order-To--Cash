@@ -18,15 +18,19 @@ unsure" principle as the matcher, gated by a stock check, writing
 straight into the same `invoices` table a manual upload would), and
 Phase 6, **stock management** (receive/correct stock for one product
 without re-importing the whole catalog, with a full audit trail — see
-"Order capture" below). Warehouse and delivery are still scoped but not
-yet built — see [`docs/ROADMAP.md`](docs/ROADMAP.md) for exactly where
-the line is and why. Full system analysis:
+"Order capture" below), and Phase 7, **warehouse fulfillment tracking**
+(a picking list of confirmed orders, one "mark fulfilled" action — see
+"Warehouse" below). **Phase 7 was built ahead of its own validation
+gate, deliberately** — see [`docs/ROADMAP.md`](docs/ROADMAP.md)'s
+validation-gates section for exactly what that means and why it doesn't
+carry forward automatically to Phase 8. Delivery and analytics are still
+scoped but not yet built. Full system analysis:
 
 - [Requirements](docs/REQUIREMENTS.md) — problem statement, ICP, actors, functional/non-functional requirements, scope
-- [Architecture](docs/ARCHITECTURE.md) — component design, reference systems (Wasoko, Twiga Foods, Safaricom Daraja/M-Pesa, EU PEPPOL/EN16931), tech stack decisions
+- [Architecture](docs/ARCHITECTURE.md) — component design, reference systems (Wasoko, Twiga Foods, Sukhiba, ChatCash, Safaricom Daraja/M-Pesa, EU PEPPOL/EN16931), tech stack decisions
 - [Data model](docs/DATA_MODEL.md) — entity-relationship diagram, how new entities extend this repo's existing schema
 - [Roadmap](docs/ROADMAP.md) — phased plan with explicit validation gates per phase
-- [Validation interview guide](docs/VALIDATION_INTERVIEW_GUIDE.md) — how to actually run the distributor interviews the roadmap gates Phase 7+ on
+- [Validation interview guide](docs/VALIDATION_INTERVIEW_GUIDE.md) — how to actually run the distributor interviews the roadmap gates Phase 8+ on
 
 ## Why it's built this way
 
@@ -164,6 +168,17 @@ Every change - a manual adjustment or stock an order consumed - is
 logged to a visible history with a reason, the same "every automated
 decision is traceable" principle the reconciliation engine already
 applies to `match_rule` on transactions.
+
+### Warehouse
+
+Phase 7: the `/warehouse` page is a picking list of every confirmed
+order not yet fulfilled, oldest first, with the product/quantity lines a
+picker needs. Stock was already decremented when the order confirmed -
+this just tracks whether it's left the warehouse-ready stage, via one
+"mark fulfilled" action with an optional note. Deliberately not a
+multi-stage pick/pack workflow - there's no real operational data yet to
+design finer-grained stages against (see `docs/ROADMAP.md`'s note on why
+this phase was built ahead of its own stated validation gate).
 
 ## Tests
 

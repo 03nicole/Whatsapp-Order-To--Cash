@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Warehouse — Reconciliation Engine{% endblock %}
+{% block content %}
+  <section class="card">
+    <h2>Warehouse — picking list</h2>
+    <form action="{{ url_for('warehouse') }}" method="get">
+      <label>
+        Business name
+        <input type="text" name="business" list="business-list" value="{{ business or '' }}" required>
+        <datalist id="business-list">
+          {% for b in businesses %}<option value="{{ b }}">{% endfor %}
+        </datalist>
+      </label>
+      <button type="submit">View</button>
+    </form>
+    <p class="hint">
+      Every confirmed order not yet marked fulfilled, oldest first. Stock
+      was already decremented when the order confirmed — this just tracks
+      whether it's been picked and packed.
+    </p>
+  </section>
+
+  {% if business %}
+    {% if orders %}
+      {% for order in orders %}
+      <section class="card">
+        <h2>{{ order.order_id }} — {{ order.customer_name or '(unknown customer)' }}</h2>
+        <p class="hint">Placed {{ order.placed_at }} · Invoice {{ order.invoice_id }} · {{ order.customer_phone or '' }}</p>
+        <table class="data-table">
+          <thead><tr><th>Product</th><th>Quantity</th><th>Line total</th></tr></thead>
+          <tbody>
+            {% for line in order.lines %}
+            <tr>
+              <td>{{ line.product_id }}</td>
+              <td>{{ line.quantity_requested }}</td>
+              <td>K{{ "{:,.2f}".format(line.line_total) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <form action="{{ url_for('fulfill_order') }}" method="post">
+          <input type="hidden" name="business" value="{{ business }}">
+          <input type="hidden" name="order_id" value="{{ order.order_id }}">
+          <label>
+            Note (optional)
+            <input type="text" name="note" placeholder="e.g. picked by Joseph">
+          </label>
+          <button type="submit">Mark fulfilled</button>
+        </form>
+      </section>
+      {% endfor %}
+    {% else %}
+    <section class="card"><p>Nothing awaiting fulfillment for "{{ business }}" right now.</p></section>
+    {% endif %}
+  {% endif %}
+  <p><a href="{{ url_for('index') }}">&larr; Back</a></p>
+{% endblock %}

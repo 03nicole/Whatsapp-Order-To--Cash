@@ -122,9 +122,28 @@ AGING_BUCKETS = [(0, 30, "0-30"), (31, 60, "31-60"), (61, 90, "61-90"), (91, Non
 DETAIL_FIELDS = ["invoice_total", "remaining_balance", "invoice_balance", "candidate_invoices"]
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, coltype: str) -> None:
+    """Adds `column` to `table` if it isn't there yet. CREATE TABLE IF NOT
+    EXISTS only helps on a brand-new database - a business's existing
+    reconciliation.db already has rows in `table`, so a new column added
+    to SCHEMA's CREATE TABLE text would silently never apply to it. This
+    is the one-line migration path used instead whenever a later phase
+    needs to add a column to a table earlier phases already created."""
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
+    # Phase 7 ("warehouse fulfillment"): added after `orders` already
+    # shipped in Phase 5, so these go through _ensure_column rather than
+    # SCHEMA's CREATE TABLE, which a real business's existing database
+    # would just skip.
+    _ensure_column(conn, "orders", "fulfilled_at", "TEXT")
+    _ensure_column(conn, "orders", "fulfillment_note", "TEXT")
+    conn.commit()
     return conn
 
 
@@ -408,6 +427,46 @@ def flagged_orders(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
         "FROM orders WHERE business = ? AND status = 'flagged' ORDER BY placed_at",
         conn, params=(business,),
     )
+
+
+def fulfillable_orders(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
+    """Confirmed orders (invoice already generated, stock already
+    consumed - see orders.py) that haven't been marked fulfilled yet.
+    Phase 7's picking list: oldest first, same FIFO convention used
+    elsewhere in this module (aging, duplicate-invoice resolution)."""
+    return pd.read_sql_query(
+        "SELECT order_id, customer_name, customer_phone, placed_at, invoice_id "
+        "FROM orders WHERE business = ? AND status = 'confirmed' AND fulfilled_at IS NULL "
+        "ORDER BY placed_at",
+        conn, params=(business,),
+    )
+
+
+def order_lines_for(conn: sqlite3.Connection, business: str, order_id: str) -> pd.DataFrame:
+    """The product/quantity lines for one order - what a warehouse
+    picker actually needs to read off a picking list."""
+    return pd.read_sql_query(
+        "SELECT product_id, quantity_requested, line_total FROM order_lines "
+        "WHERE business = ? AND order_id = ? ORDER BY line_no",
+        conn, params=(business, order_id),
+    )
+
+
+def mark_order_fulfilled(conn: sqlite3.Connection, business: str, order_id: str,
+                          note: str | None = None, fulfilled_at: str | None = None) -> None:
+    """Records that a confirmed order has been picked/packed. Deliberately
+    one step, not a multi-stage picking/packing workflow - per
+    ROADMAP.md's own Phase 7 entry, there's no real operational data yet
+    to design finer-grained stages against, so this names the one thing
+    that's actually known to matter (has it left the warehouse-readiness
+    stage or not) rather than inventing states nobody's validated."""
+    fulfilled_at = fulfilled_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.execute(
+        "UPDATE orders SET status = 'fulfilled', fulfilled_at = ?, fulfillment_note = ? "
+        "WHERE business = ? AND order_id = ? AND status = 'confirmed'",
+        (fulfilled_at, note, business, order_id),
+    )
+    conn.commit()
 
 
 def aging_summary_by_customer(aging_df: pd.DataFrame) -> pd.DataFrame:

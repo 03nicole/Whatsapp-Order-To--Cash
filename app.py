@@ -260,6 +260,47 @@ def orders_review():
     )
 
 
+@app.route("/warehouse")
+def warehouse():
+    """Phase 7's picking list: every confirmed order not yet marked
+    fulfilled, oldest first, with the product/quantity lines a warehouse
+    picker actually needs. One action - mark fulfilled - not a
+    multi-stage pick/pack workflow; see db.mark_order_fulfilled's
+    docstring for why."""
+    business = request.args.get("business", "").strip()
+    conn = db.connect(DB_PATH)
+    businesses = db.known_businesses(conn)
+    pending = []
+    if business:
+        for order in db.fulfillable_orders(conn, business).to_dict(orient="records"):
+            order["lines"] = db.order_lines_for(conn, business, order["order_id"]).to_dict(orient="records")
+            pending.append(order)
+    conn.close()
+    return render_template(
+        "warehouse.html", businesses=businesses, business=business or None, orders=pending,
+    )
+
+
+@app.route("/warehouse/fulfill", methods=["POST"])
+def fulfill_order():
+    business = request.form.get("business", "").strip()
+    order_id = request.form.get("order_id", "").strip()
+    note = request.form.get("note", "").strip() or None
+
+    conn = db.connect(DB_PATH)
+    exists = order_id in set(db.fulfillable_orders(conn, business)["order_id"])
+    if not exists:
+        conn.close()
+        flash(f"Order '{order_id}' isn't awaiting fulfillment for '{business}' (already done, or doesn't exist).")
+        return redirect(url_for("warehouse", business=business))
+
+    db.mark_order_fulfilled(conn, business, order_id, note=note)
+    conn.close()
+
+    flash(f"Order {order_id} marked fulfilled" + (f" ({note})" if note else "") + ".")
+    return redirect(url_for("warehouse", business=business))
+
+
 def _handle_incoming_order(conn: sqlite3.Connection, business: str,
                             message: whatsapp.IncomingMessage, client: whatsapp.WhatsAppClient) -> None:
     """One incoming WhatsApp text message -> a parsed, stock-checked
