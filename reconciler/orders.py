@@ -120,6 +120,53 @@ def parse_order_message(message: str, catalog: pd.DataFrame) -> ParsedOrder:
     return ParsedOrder(lines=lines, status="confirmed", amount=amount)
 
 
+def resolve_native_order(items: list, catalog: pd.DataFrame) -> ParsedOrder:
+    """Builds a ParsedOrder from a WhatsApp native Catalog/Cart checkout
+    (reconciler.whatsapp.IncomingOrder.items - typed loosely here as
+    `list` rather than importing that dataclass, so this module stays
+    transport-agnostic the way parse_order_message() already is; each
+    item just needs .product_retailer_id, .quantity, .item_price
+    attributes).
+
+    Unlike parse_order_message(), there's no code/name-matching
+    waterfall to run - a native checkout already carries an exact
+    product identifier per line, on the assumption that the
+    distributor's Meta Commerce Catalog was set up with each product's
+    retailer_id matching this system's own product_id (a setup step,
+    not something this function can verify). Still never partially
+    confirms: if any item's retailer_id isn't found in the catalog, the
+    WHOLE order is flagged - the same invariant parse_order_message()
+    enforces, so a business can't end up with an order half-resolved
+    against a stale or mismatched catalog sync."""
+    lines: list[ParsedLine] = []
+    for item in items:
+        ref_norm = item.product_retailer_id.strip().lower()
+        match = catalog[catalog["product_id"].str.lower() == ref_norm]
+        if len(match) == 1:
+            row = match.iloc[0]
+            unit_price = float(row["unit_price"])
+            line_total = round(item.quantity * unit_price, 2)
+            lines.append(ParsedLine(
+                raw_text=item.product_retailer_id, quantity_requested=item.quantity,
+                product_id=row["product_id"], product_name=row["name"],
+                unit_price=unit_price, line_total=line_total, resolution="exact_code",
+            ))
+        else:
+            lines.append(ParsedLine(
+                raw_text=item.product_retailer_id, quantity_requested=item.quantity,
+                resolution="unknown_product",
+            ))
+
+    unresolved = [l for l in lines if l.resolution != "exact_code"]
+    if unresolved:
+        reason = "; ".join(f"'{l.raw_text}' -> {l.resolution}" for l in unresolved)
+        return ParsedOrder(lines=lines, status="flagged",
+                            flag_reason=f"native catalog order: could not resolve: {reason}")
+
+    amount = round(sum(l.line_total for l in lines), 2)
+    return ParsedOrder(lines=lines, status="confirmed", amount=amount)
+
+
 def check_stock(order: ParsedOrder, catalog: pd.DataFrame) -> ParsedOrder:
     """Only meaningful once order.status == 'confirmed' (every line
     resolved) — checks each line's requested quantity against

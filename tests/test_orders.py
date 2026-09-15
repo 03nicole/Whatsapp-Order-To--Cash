@@ -5,7 +5,7 @@ import pytest
 
 from reconciler import load_catalog
 from reconciler.orders import (
-    build_invoice, check_stock, order_record, parse_order_message,
+    build_invoice, check_stock, order_record, parse_order_message, resolve_native_order,
 )
 
 SAMPLE_DATA = Path(__file__).resolve().parent.parent / "sample_data"
@@ -70,6 +70,53 @@ def test_resolves_unique_substring_name_match(catalog):
     assert order.status == "confirmed"
     assert order.lines[0].product_id == "COKE-24"
     assert order.lines[0].resolution == "unique_name"
+
+
+# --- resolve_native_order (WhatsApp native Catalog/Cart checkout) --------
+
+def _item(product_retailer_id, quantity, item_price=0.0, currency="ZMW"):
+    from reconciler.whatsapp import OrderItem
+    return OrderItem(product_retailer_id=product_retailer_id, quantity=quantity,
+                      item_price=item_price, currency=currency)
+
+
+def test_resolve_native_order_confirms_when_every_retailer_id_matches(catalog):
+    order = resolve_native_order([_item("COKE-24", 10), _item("FANTA-24", 5)], catalog)
+    assert order.status == "confirmed"
+    assert order.amount == 10 * 120.0 + 5 * 110.0
+    assert [l.resolution for l in order.lines] == ["exact_code", "exact_code"]
+
+
+def test_resolve_native_order_is_case_insensitive_on_retailer_id(catalog):
+    order = resolve_native_order([_item("coke-24", 1)], catalog)
+    assert order.status == "confirmed"
+    assert order.lines[0].product_id == "COKE-24"
+
+
+def test_resolve_native_order_flags_the_whole_order_on_one_unknown_retailer_id(catalog):
+    """Same invariant as parse_order_message(): never partially confirm.
+    A mismatched Meta-catalog-to-our-catalog sync shouldn't silently
+    ship half an order."""
+    order = resolve_native_order([_item("COKE-24", 10), _item("NOT-IN-OUR-CATALOG", 2)], catalog)
+    assert order.status == "flagged"
+    assert "NOT-IN-OUR-CATALOG" in order.flag_reason
+    assert order.lines[0].resolution == "exact_code"  # still parsed correctly
+    assert order.lines[1].resolution == "unknown_product"
+
+
+def test_resolve_native_order_never_falls_back_to_name_matching(catalog):
+    """Unlike parse_order_message(), there's no code/name waterfall here
+    - a native order's retailer_id must match a product_id exactly, or
+    it's unresolved, even if it happens to look like a product name."""
+    order = resolve_native_order([_item("Coca-Cola", 1)], catalog)
+    assert order.status == "flagged"
+
+
+def test_resolve_native_order_check_stock_integrates_normally(catalog):
+    order = resolve_native_order([_item("SPRITE-24", 10)], catalog)  # only 5 on hand
+    order = check_stock(order, catalog)
+    assert order.status == "flagged"
+    assert "insufficient stock" in order.flag_reason
 
 
 # --- parse_order_message: never guess when unsure -------------------------

@@ -35,10 +35,39 @@ class IncomingMessage:
     message_id: str | None = None
 
 
+@dataclass
+class OrderItem:
+    product_retailer_id: str
+    quantity: int
+    item_price: float
+    currency: str
+
+
+@dataclass
+class IncomingOrder:
+    """A completed WhatsApp native Catalog/Cart checkout - arrives
+    already structured (exact product identifiers + quantities), unlike
+    IncomingMessage's free text. Assumes the distributor's Meta Commerce
+    Catalog is set up with each product's retailer_id matching this
+    system's own product_id - an operational setup step, not something
+    this code can verify; see reconciler/orders.py's
+    resolve_native_order() for what happens when that assumption is
+    wrong for a given item."""
+    sender_phone: str
+    sender_name: str | None
+    catalog_id: str
+    items: list[OrderItem]
+    note: str
+    message_id: str | None = None
+
+
 def parse_webhook_payload(payload: dict) -> list[IncomingMessage]:
-    """Extracts every text message in one Meta webhook POST body. Ignores
-    non-text messages (images, stickers, status callbacks) — Phase 5 is
-    structured text ordering, not media parsing."""
+    """Extracts every free-text message in one Meta webhook POST body.
+    Ignores non-text messages - images, stickers, status callbacks, and
+    (since Phase 5b) native Catalog/Cart "order" messages, which
+    parse_order_messages() below handles separately, since they arrive
+    already structured rather than as free text to run through the
+    parsing waterfall."""
     messages = []
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
@@ -57,6 +86,46 @@ def parse_webhook_payload(payload: dict) -> list[IncomingMessage]:
                     message_id=msg.get("id"),
                 ))
     return messages
+
+
+def parse_order_messages(payload: dict) -> list[IncomingOrder]:
+    """Extracts every completed native Catalog/Cart checkout ("order"
+    type messages) in one Meta webhook POST body - see IncomingOrder's
+    docstring. A message with no product_items (shouldn't happen for a
+    real checkout, but seen in malformed/test payloads) is skipped
+    rather than producing an empty order."""
+    orders = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            contacts = {c.get("wa_id"): c.get("profile", {}).get("name")
+                        for c in value.get("contacts", [])}
+            for msg in value.get("messages", []):
+                if msg.get("type") != "order":
+                    continue
+                order_data = msg.get("order", {})
+                items_raw = order_data.get("product_items", [])
+                if not items_raw:
+                    continue
+                sender_phone = msg.get("from", "")
+                items = [
+                    OrderItem(
+                        product_retailer_id=item.get("product_retailer_id", ""),
+                        quantity=int(item.get("quantity", 0)),
+                        item_price=float(item.get("item_price", 0)),
+                        currency=item.get("currency", ""),
+                    )
+                    for item in items_raw
+                ]
+                orders.append(IncomingOrder(
+                    sender_phone=sender_phone,
+                    sender_name=contacts.get(sender_phone),
+                    catalog_id=order_data.get("catalog_id", ""),
+                    items=items,
+                    note=order_data.get("text", ""),
+                    message_id=msg.get("id"),
+                ))
+    return orders
 
 
 def verify_webhook_subscription(query_params: dict, verify_token: str) -> str | None:

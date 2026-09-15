@@ -165,6 +165,18 @@ of it - visible on the web UI's `/orders` page. A cleanly-resolved order
 writes an invoice, decrements stock, and confirms back to the customer
 over WhatsApp (or into the logging client's record, in dev).
 
+**A customer can also order through WhatsApp's native Catalog/Cart
+feature** (browse a synced product catalog and check out without
+leaving the chat) instead of typing free text - Meta sends a distinct
+`"order"`-type webhook message for this, already structured as exact
+product IDs and quantities, handled by
+`reconciler.orders.resolve_native_order`. This only works correctly if
+the distributor's Meta Commerce Catalog is set up with each product's
+`retailer_id` matching this system's own product code - a setup step
+outside this codebase; a mismatch flags the order rather than guessing,
+same as the free-text path. Both paths feed the same invoice/stock/
+confirmation logic and can arrive in the same webhook batch.
+
 **Try the whole loop** with `sample_data/catalog.csv` (12 products - the
 same "Sample Distributor Ltd" business the reconciliation walkthrough
 above uses) and a simulated webhook payload, no real WhatsApp account

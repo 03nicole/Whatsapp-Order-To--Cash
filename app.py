@@ -326,45 +326,74 @@ def fulfill_order():
     return redirect(url_for("warehouse", business=business))
 
 
-def _handle_incoming_order(conn: sqlite3.Connection, business: str,
-                            message: whatsapp.IncomingMessage, client: whatsapp.WhatsAppClient) -> None:
-    """One incoming WhatsApp text message -> a parsed, stock-checked
-    order -> either an invoice row in the EXISTING invoices table (never
-    a parallel schema, per docs/DATA_MODEL.md) or a flagged order a sales
+def _finalize_order(conn: sqlite3.Connection, business: str, order_id: str,
+                     sender_name: str | None, sender_phone: str, raw_message: str,
+                     parsed: "orders.ParsedOrder", client: whatsapp.WhatsAppClient) -> None:
+    """Shared tail for every order-capture path (free-text WhatsApp
+    messages, and - since Phase 5b - WhatsApp's native Catalog/Cart
+    checkout): once a ParsedOrder exists and its stock check has run,
+    everything after that is identical regardless of how the order was
+    resolved - an invoice row in the EXISTING invoices table (never a
+    parallel schema, per docs/DATA_MODEL.md), or a flagged order a sales
     agent resolves from the /orders page. Never partially confirms."""
-    catalog_df = db.get_catalog(conn, business)
     placed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    order_id = message.message_id or uuid.uuid4().hex
-
-    parsed = orders.parse_order_message(message.text, catalog_df)
-    parsed = orders.check_stock(parsed, catalog_df)
-
     invoice_id = None
     if parsed.status == "confirmed":
-        invoice = orders.build_invoice(parsed, order_id, message.sender_name,
-                                        message.sender_phone, placed_at)
+        invoice = orders.build_invoice(parsed, order_id, sender_name, sender_phone, placed_at)
         invoice_id = invoice["invoice_id"]
         db.record_order_invoice(conn, business, invoice)
         for line in parsed.lines:
             db.adjust_stock(conn, business, line.product_id, -line.quantity_requested,
                              reason=f"order:{order_id}", adjusted_at=placed_at)
         client.send_text(
-            message.sender_phone,
+            sender_phone,
             f"Order confirmed - invoice {invoice_id} for K{parsed.amount:,.2f}. "
             f"Pay via MoMo and we'll confirm once it's received.",
         )
     else:
         client.send_text(
-            message.sender_phone,
+            sender_phone,
             "Thanks - your order needs a quick check from our team before we confirm it. "
             "We'll get back to you shortly.",
         )
 
     order_dict, line_dicts = orders.order_record(
-        parsed, order_id, message.sender_name, message.sender_phone, placed_at,
-        message.text, invoice_id,
+        parsed, order_id, sender_name, sender_phone, placed_at, raw_message, invoice_id,
     )
     db.save_order(conn, business, order_dict, line_dicts)
+
+
+def _handle_incoming_order(conn: sqlite3.Connection, business: str,
+                            message: whatsapp.IncomingMessage, client: whatsapp.WhatsAppClient) -> None:
+    """A free-text WhatsApp message -> parsed against the catalog by
+    code/name -> _finalize_order()."""
+    catalog_df = db.get_catalog(conn, business)
+    order_id = message.message_id or uuid.uuid4().hex
+    parsed = orders.parse_order_message(message.text, catalog_df)
+    parsed = orders.check_stock(parsed, catalog_df)
+    _finalize_order(conn, business, order_id, message.sender_name, message.sender_phone,
+                     message.text, parsed, client)
+
+
+def _handle_incoming_native_order(conn: sqlite3.Connection, business: str,
+                                   native_order: whatsapp.IncomingOrder,
+                                   client: whatsapp.WhatsAppClient) -> None:
+    """A completed WhatsApp native Catalog/Cart checkout -> resolved by
+    exact product_retailer_id, no code/name waterfall needed ->
+    _finalize_order(). See reconciler.orders.resolve_native_order's
+    docstring for the retailer_id/product_id matching assumption this
+    depends on."""
+    catalog_df = db.get_catalog(conn, business)
+    order_id = native_order.message_id or uuid.uuid4().hex
+    parsed = orders.resolve_native_order(native_order.items, catalog_df)
+    parsed = orders.check_stock(parsed, catalog_df)
+    raw_message = "[WhatsApp catalog order] " + ", ".join(
+        f"{item.quantity}x {item.product_retailer_id}" for item in native_order.items
+    )
+    if native_order.note:
+        raw_message += f" (note: {native_order.note})"
+    _finalize_order(conn, business, order_id, native_order.sender_name, native_order.sender_phone,
+                     raw_message, parsed, client)
 
 
 @app.route("/whatsapp/webhook", methods=["GET"])
@@ -380,15 +409,23 @@ def whatsapp_webhook_receive():
     """One webhook URL per business for now - configure it as
     `/whatsapp/webhook?business=<name>` with the provider. Multi-number
     routing (mapping a WhatsApp Business phone number ID to a business
-    automatically) is a Phase 5 follow-up, not needed for a single pilot."""
+    automatically) is a Phase 5 follow-up, not needed for a single pilot.
+
+    Handles both order-capture paths: free-text messages (parsed against
+    the catalog by code/name) and, since Phase 5b, completed WhatsApp
+    native Catalog/Cart checkouts ("order"-type messages, already
+    structured - see reconciler/whatsapp.py's IncomingOrder)."""
     business = request.args.get("business", "").strip() or "default"
     payload = request.get_json(silent=True) or {}
     messages = whatsapp.parse_webhook_payload(payload)
+    native_orders = whatsapp.parse_order_messages(payload)
 
     conn = db.connect(DB_PATH)
     client = whatsapp.get_client()
     for message in messages:
         _handle_incoming_order(conn, business, message, client)
+    for native_order in native_orders:
+        _handle_incoming_native_order(conn, business, native_order, client)
     conn.close()
 
     return "", 200

@@ -1,5 +1,6 @@
 from reconciler.whatsapp import (
-    LoggingWhatsAppClient, get_client, parse_webhook_payload, verify_webhook_subscription,
+    LoggingWhatsAppClient, get_client, parse_order_messages, parse_webhook_payload,
+    verify_webhook_subscription,
 )
 
 
@@ -94,3 +95,66 @@ def test_get_client_uses_real_client_when_credentials_configured(monkeypatch):
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
     from reconciler.whatsapp import MetaCloudAPIClient
     assert isinstance(get_client(), MetaCloudAPIClient)
+
+
+# --- parse_order_messages (native Catalog/Cart checkout) -------------------
+
+def _order_payload(product_items, sender_phone="260977111111", sender_name="ABC Traders",
+                    message_id="wamid.order1", note="", catalog_id="104954523425094"):
+    return {
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "contacts": [{"wa_id": sender_phone, "profile": {"name": sender_name}}],
+                    "messages": [{
+                        "from": sender_phone, "id": message_id, "type": "order",
+                        "order": {"catalog_id": catalog_id, "product_items": product_items,
+                                  "text": note},
+                    }],
+                }
+            }]
+        }]
+    }
+
+
+def test_parses_a_completed_catalog_order():
+    payload = _order_payload([
+        {"product_retailer_id": "COKE-24", "quantity": 10, "item_price": 120.0, "currency": "ZMW"},
+        {"product_retailer_id": "FANTA-24", "quantity": 5, "item_price": 110.0, "currency": "ZMW"},
+    ], note="Deliver tomorrow morning please")
+    orders = parse_order_messages(payload)
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.sender_phone == "260977111111"
+    assert order.sender_name == "ABC Traders"
+    assert order.catalog_id == "104954523425094"
+    assert order.note == "Deliver tomorrow morning please"
+    assert len(order.items) == 2
+    assert order.items[0].product_retailer_id == "COKE-24"
+    assert order.items[0].quantity == 10
+    assert order.items[0].item_price == 120.0
+
+
+def test_ignores_text_messages_when_parsing_orders():
+    payload = {
+        "entry": [{"changes": [{"value": {
+            "contacts": [], "messages": [{"from": "260977111111", "type": "text",
+                                          "text": {"body": "10 COKE-24"}}],
+        }}]}]
+    }
+    assert parse_order_messages(payload) == []
+
+
+def test_ignores_an_order_message_with_no_product_items():
+    payload = _order_payload([])
+    assert parse_order_messages(payload) == []
+
+
+def test_parse_webhook_payload_ignores_order_type_messages():
+    """The text-message parser and the order parser are separate passes -
+    an order-type message must never show up as a free-text
+    IncomingMessage."""
+    payload = _order_payload([
+        {"product_retailer_id": "COKE-24", "quantity": 10, "item_price": 120.0, "currency": "ZMW"},
+    ])
+    assert parse_webhook_payload(payload) == []
