@@ -8,17 +8,36 @@
 </head>
 <body>
   <header>
-    <h1><a href="{{ url_for('index') }}">Reconciliation Engine</a></h1>
+    <div class="header-bar">
+      <h1><a href="{{ url_for('index') }}">Reconciliation Engine</a></h1>
+      <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
+    </div>
+    <nav class="topnav">
+      <a href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint in ('index', 'do_reconcile') else '' }}">Reconcile</a>
+      <a href="{{ url_for('aging') }}" class="{{ 'active' if request.endpoint == 'aging' else '' }}">Aging</a>
+      <a href="{{ url_for('catalog_manage') }}" class="{{ 'active' if request.endpoint in ('catalog_manage', 'adjust_stock') else '' }}">Catalog &amp; Stock</a>
+      <a href="{{ url_for('orders_review') }}" class="{{ 'active' if request.endpoint == 'orders_review' else '' }}">Orders</a>
+      <a href="{{ url_for('warehouse') }}" class="{{ 'active' if request.endpoint in ('warehouse', 'fulfill_order') else '' }}">Warehouse</a>
+    </nav>
   </header>
   <main>
-    {% with messages = get_flashed_messages() %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <ul class="flashes">
-          {% for message in messages %}<li>{{ message }}</li>{% endfor %}
+          {% for category, message in messages %}
+            <li class="flash-{{ category }}">{{ message }}</li>
+          {% endfor %}
         </ul>
       {% endif %}
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+  <script>
+    document.querySelector('.nav-toggle').addEventListener('click', function () {
+      var nav = document.querySelector('.topnav');
+      var expanded = nav.classList.toggle('open');
+      this.setAttribute('aria-expanded', expanded);
+    });
+  </script>
 </body>
 </html>

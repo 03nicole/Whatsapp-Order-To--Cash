@@ -88,24 +88,24 @@ def do_reconcile():
     invoices_file = request.files.get("invoices")
     momo_file = request.files.get("momo_statement")
     if not invoices_file or not invoices_file.filename:
-        flash("Choose an invoices file.")
+        flash("Choose an invoices file.", "error")
         return redirect(url_for("index"))
     if not momo_file or not momo_file.filename:
-        flash("Choose a MoMo statement file.")
+        flash("Choose a MoMo statement file.", "error")
         return redirect(url_for("index"))
 
     try:
         invoices_path = _save_upload(invoices_file)
         momo_path = _save_upload(momo_file)
     except ValueError as exc:
-        flash(str(exc))
+        flash(str(exc), "error")
         return redirect(url_for("index"))
 
     try:
         invoices = load_invoices(invoices_path)
         momo = load_momo_statement(momo_path)
     except ValueError as exc:
-        flash(f"Couldn't read that file: {exc}")
+        flash(f"Couldn't read that file: {exc}", "error")
         return redirect(url_for("index"))
     finally:
         invoices_path.unlink(missing_ok=True)
@@ -148,7 +148,7 @@ def aging():
     aging_df = db.aging_report(conn, business)
     if aging_df.empty:
         conn.close()
-        flash(f"No open invoices on record for '{business}'. Run a reconcile first.")
+        flash(f"No open invoices on record for '{business}'. Run a reconcile first.", "info")
         return redirect(url_for("index"))
 
     summary_df = db.aging_summary_by_customer(aging_df)
@@ -170,7 +170,7 @@ def aging():
 def download(token):
     entry = _downloads.get(token)
     if entry is None or not entry[0].exists():
-        flash("That report has expired - run the reconciliation again.")
+        flash("That report has expired - run the reconciliation again.", "error")
         return redirect(url_for("index"))
     path, friendly_name = entry
     return send_file(path, as_attachment=True, download_name=friendly_name)
@@ -181,19 +181,19 @@ def import_catalog():
     business = request.form.get("business", "").strip() or "default"
     catalog_file = request.files.get("catalog")
     if not catalog_file or not catalog_file.filename:
-        flash("Choose a catalog file.")
+        flash("Choose a catalog file.", "error")
         return redirect(url_for("index"))
 
     try:
         catalog_path = _save_upload(catalog_file)
     except ValueError as exc:
-        flash(str(exc))
+        flash(str(exc), "error")
         return redirect(url_for("index"))
 
     try:
         catalog_df = load_catalog(catalog_path)
     except ValueError as exc:
-        flash(f"Couldn't read that file: {exc}")
+        flash(f"Couldn't read that file: {exc}", "error")
         return redirect(url_for("index"))
     finally:
         catalog_path.unlink(missing_ok=True)
@@ -202,7 +202,7 @@ def import_catalog():
     db.save_catalog(conn, catalog_df, business)
     conn.close()
 
-    flash(f"Imported {len(catalog_df)} product(s) into the catalog for '{business}'.")
+    flash(f"Imported {len(catalog_df)} product(s) into the catalog for '{business}'.", "success")
     return redirect(url_for("catalog_manage", business=business))
 
 
@@ -230,17 +230,17 @@ def adjust_stock():
     try:
         delta = int(request.form.get("delta", ""))
     except ValueError:
-        flash("Stock change must be a whole number (e.g. 20 or -5).")
+        flash("Stock change must be a whole number (e.g. 20 or -5).", "error")
         return redirect(url_for("catalog_manage", business=business))
 
     conn = db.connect(DB_PATH)
     applied = db.adjust_stock(conn, business, product_id, delta, reason=reason)
     conn.close()
     if not applied:
-        flash(f"No product '{product_id}' in the catalog for '{business}'.")
+        flash(f"No product '{product_id}' in the catalog for '{business}'.", "error")
         return redirect(url_for("catalog_manage", business=business))
 
-    flash(f"Adjusted {product_id} by {delta:+d}" + (f" ({reason})" if reason else "") + ".")
+    flash(f"Adjusted {product_id} by {delta:+d}" + (f" ({reason})" if reason else "") + ".", "success")
     return redirect(url_for("catalog_manage", business=business))
 
 
@@ -288,10 +288,10 @@ def fulfill_order():
     applied = db.mark_order_fulfilled(conn, business, order_id, note=note)
     conn.close()
     if not applied:
-        flash(f"Order '{order_id}' isn't awaiting fulfillment for '{business}' (already done, or doesn't exist).")
+        flash(f"Order '{order_id}' isn't awaiting fulfillment for '{business}' (already done, or doesn't exist).", "error")
         return redirect(url_for("warehouse", business=business))
 
-    flash(f"Order {order_id} marked fulfilled" + (f" ({note})" if note else "") + ".")
+    flash(f"Order {order_id} marked fulfilled" + (f" ({note})" if note else "") + ".", "success")
     return redirect(url_for("warehouse", business=business))
 
 
