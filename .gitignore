@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated at runtime — not source
+*.db
+reconciliation_report.xlsx
+aging_report.xlsx
+
+# Common local-env cruft
+.venv/
+venv/
+.vscode/
+.idea/

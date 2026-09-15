@@ -1,0 +1,12 @@
+Txn ID,Date,Amount,Sender,Sender Phone,Narration
+TXN00892,2026-09-03,8000,Kunda Wholesalers,260966222222,inv1002 payment
+TXN00901,2026-09-04,2000,Chanda Enterprises,260955333333,part payment
+TXN00915,2026-09-06,4000,Bwalya Cosmetics Ltd,260955666666,INV-1006 settlement
+TXN00920,2026-09-07,9200,Kunda Wholesalers,260966222222,sept stock
+TXN00933,2026-09-08,12000,Mwansa Stores,260977444444,payment
+TXN00941,2026-09-09,1500,Chanda Enterprises,260955333333,balance clearing
+TXN00958,2026-09-10,5000,,,momo payment
+TXN00966,2026-09-11,750,Agent Topup,,wallet topup
+TXN00974,2026-09-12,5000,ABC Traders,260977111111,Inv-1001 Payment
+TXN00980,2026-09-13,1000,Ndhlovu Retailers,260977888888,stock payment
+TXN00981,2026-09-14,2200,Ndhlovu Retailers,260977888888,INV-1013 payment
