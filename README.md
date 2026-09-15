@@ -8,6 +8,18 @@ unmatched. This is the V0 "manual service" tool from the plan: you run it on
 a real distributor's data by hand, by email, or over a call — not a live
 SaaS yet.
 
+This is one component of a larger confirmed product direction — a
+WhatsApp Order-to-Cash platform for FMCG wholesalers/distributors
+(Zambia first). This repo is currently the **reconciliation stage** of
+that pipeline: everything below is done and tested; the order-capture,
+stock, warehouse, and delivery stages are scoped but not yet built. See
+[`docs/`](docs/) for the full system analysis:
+
+- [Requirements](docs/REQUIREMENTS.md) — problem statement, ICP, actors, functional/non-functional requirements, scope
+- [Architecture](docs/ARCHITECTURE.md) — component design, reference systems (Wasoko, Twiga Foods, Safaricom Daraja/M-Pesa, EU PEPPOL/EN16931), tech stack decisions
+- [Data model](docs/DATA_MODEL.md) — entity-relationship diagram, how new entities extend this repo's existing schema
+- [Roadmap](docs/ROADMAP.md) — phased plan with explicit validation gates per phase
+
 ## Why it's built this way
 
 The matching is a **deterministic rules waterfall**, not machine learning:
