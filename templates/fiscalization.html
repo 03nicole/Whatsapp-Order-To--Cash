@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "_macros.html" import business_picker_form %}
+{% block title %}Fiscalization — Reconciliation Engine{% endblock %}
+{% block content %}
+  <section class="card">
+    <h2>ZRA Smart Invoice fiscalization</h2>
+    {{ business_picker_form(url_for('fiscalization'), businesses, business) }}
+    <p class="hint">
+      Every confirmed order is submitted to ZRA automatically, best-effort,
+      right after it's confirmed — a slow or unreachable ZRA never blocks
+      an order from confirming. Failures (missing product tax fields, ZRA
+      rejecting the submission) show up below for a retry.
+    </p>
+  </section>
+
+  {% if business %}
+  <section class="card">
+    <h2>ZRA settings for "{{ business }}"</h2>
+    {% if settings %}
+    <p class="hint">Configured — TPIN {{ settings.tpin }}, branch {{ settings.bhf_id }}, device {{ settings.device_serial }}.</p>
+    {% else %}
+    <p class="hint">Not configured yet — orders for this business are never submitted to ZRA until these are set.</p>
+    {% endif %}
+    <form action="{{ url_for('save_zra_settings') }}" method="post">
+      <input type="hidden" name="business" value="{{ business }}">
+      <label>
+        VSDC server URL
+        <input type="url" name="server_url" value="{{ settings.server_url if settings else '' }}" placeholder="https://..." required>
+      </label>
+      <label>
+        Username
+        <input type="text" name="username" value="{{ settings.username if settings else '' }}" required>
+      </label>
+      <label>
+        Password
+        <input type="password" name="password" placeholder="{{ '(unchanged)' if settings else '' }}" required>
+      </label>
+      <label>
+        TPIN
+        <input type="text" name="tpin" value="{{ settings.tpin if settings else '' }}" required>
+      </label>
+      <label>
+        Branch ID (bhfId)
+        <input type="text" name="bhf_id" value="{{ settings.bhf_id if settings else '' }}" required>
+      </label>
+      <label>
+        Device serial number
+        <input type="text" name="device_serial" value="{{ settings.device_serial if settings else '' }}" required>
+      </label>
+      <button type="submit">Save ZRA settings</button>
+    </form>
+    <p class="hint">
+      Also required per product before it can be fiscalized: a VAT
+      category code and ZRA item classification code, set on the
+      <a href="{{ url_for('catalog_manage', business=business) }}">Catalog &amp; Stock</a> page.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Needs a retry</h2>
+    {% if failed %}
+    <table class="data-table">
+      <thead><tr><th>Order</th><th>Invoice</th><th>Customer</th><th>Placed</th><th>Error</th><th></th></tr></thead>
+      <tbody>
+        {% for f in failed %}
+        <tr>
+          <td>{{ f.order_id }}</td>
+          <td>{{ f.invoice_id }}</td>
+          <td>{{ f.customer_name or '' }}</td>
+          <td>{{ f.placed_at }}</td>
+          <td>{{ f.fiscalization_error }}</td>
+          <td>
+            <form action="{{ url_for('retry_fiscalization') }}" method="post">
+              <input type="hidden" name="business" value="{{ business }}">
+              <input type="hidden" name="order_id" value="{{ f.order_id }}">
+              <button type="submit">Retry</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>Nothing needs a retry for "{{ business }}" right now.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+  <p><a href="{{ url_for('index') }}">&larr; Back</a></p>
+{% endblock %}

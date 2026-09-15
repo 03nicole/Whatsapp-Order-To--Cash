@@ -21,6 +21,7 @@ service — no reason to run a database server for that yet.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import date, datetime, timezone
@@ -169,6 +170,16 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # see reconciler/zra.py's build_sales_payload(), which refuses to
     # fiscalize any invoice containing a product missing either of these.
     _ensure_columns(conn, "products", {"vat_category_code": "TEXT", "item_class_code": "TEXT"})
+    # Phase 11 follow-up: tracks the outcome of a best-effort fiscalization
+    # attempt, made right after order confirmation - never blocks the order
+    # itself, see app.py's _fiscalize_order(). NULL/no status at all means
+    # "never attempted" (business hasn't configured zra_settings, or the
+    # order was flagged and never became an invoice in the first place).
+    _ensure_columns(conn, "orders", {
+        "fiscalization_status": "TEXT",     # NULL | pending | fiscalized | failed
+        "fiscalization_error": "TEXT",
+        "fiscalization_response": "TEXT",   # raw ZRA response JSON, for audit/debugging
+    })
     conn.commit()
     return conn
 
@@ -610,9 +621,12 @@ def fulfillable_orders(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
 
 def order_lines_for(conn: sqlite3.Connection, business: str, order_id: str) -> pd.DataFrame:
     """The product/quantity lines for one order - what a warehouse
-    picker actually needs to read off a picking list."""
+    picker needs for a picking list, and (unit_price) what
+    reconciler/zra.py's build_sales_payload() needs to fiscalize the
+    order at the price actually charged at order time, not today's
+    catalog price, which may have since changed."""
     return pd.read_sql_query(
-        "SELECT product_id, quantity_requested, line_total FROM order_lines "
+        "SELECT product_id, quantity_requested, unit_price, line_total FROM order_lines "
         "WHERE business = ? AND order_id = ? ORDER BY line_no",
         conn, params=(business, order_id),
     )
@@ -639,6 +653,46 @@ def mark_order_fulfilled(conn: sqlite3.Connection, business: str, order_id: str,
     )
     conn.commit()
     return cursor.rowcount > 0
+
+
+def mark_order_fiscalized(conn: sqlite3.Connection, business: str, order_id: str, response: dict) -> None:
+    """Records a successful best-effort ZRA submission - see app.py's
+    _fiscalize_order(). Never raises on an unknown order_id (unlike
+    mark_order_fulfilled's False-on-no-match): this is called from a
+    best-effort path that must never itself become a new failure mode."""
+    conn.execute(
+        "UPDATE orders SET fiscalization_status = 'fiscalized', fiscalization_error = NULL, "
+        "fiscalization_response = ? WHERE business = ? AND order_id = ?",
+        (json.dumps(response), business, order_id),
+    )
+    conn.commit()
+
+
+def mark_order_fiscalization_failed(conn: sqlite3.Connection, business: str, order_id: str,
+                                     error: str) -> None:
+    """Records a failed best-effort ZRA submission attempt (missing tax
+    fields, ZRA rejected it, network/timeout) - the order itself is
+    already confirmed and unaffected; this just makes the failure visible
+    on the /fiscalization review page instead of silently vanishing into
+    a log line nobody reads."""
+    conn.execute(
+        "UPDATE orders SET fiscalization_status = 'failed', fiscalization_error = ? "
+        "WHERE business = ? AND order_id = ?",
+        (error, business, order_id),
+    )
+    conn.commit()
+
+
+def orders_needing_fiscalization_retry(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
+    """Confirmed orders whose best-effort ZRA submission failed - the
+    fiscalization equivalent of flagged_orders()/fulfillable_orders()'s
+    review-queue pattern. A human (or a retry action) resolves these;
+    nothing here blocks the order itself, which already confirmed."""
+    return pd.read_sql_query(
+        "SELECT order_id, invoice_id, customer_name, placed_at, fiscalization_error "
+        "FROM orders WHERE business = ? AND fiscalization_status = 'failed' ORDER BY placed_at",
+        conn, params=(business,),
+    )
 
 
 def aging_summary_by_customer(aging_df: pd.DataFrame) -> pd.DataFrame:

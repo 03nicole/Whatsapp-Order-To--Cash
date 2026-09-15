@@ -32,7 +32,7 @@ from flask import Flask, Response, flash, redirect, render_template, request, se
 from werkzeug.utils import secure_filename
 
 from reconciler import load_catalog, load_invoices, load_momo_statement, reconcile
-from reconciler import db, flutterwave, orders, whatsapp
+from reconciler import db, flutterwave, orders, whatsapp, zra
 from reconciler.catalog_feed import build_meta_feed_csv
 from reconciler.report import write_report, write_aging_report
 
@@ -401,6 +401,72 @@ def fulfill_order():
     return redirect(url_for("warehouse", business=business))
 
 
+@app.route("/fiscalization")
+def fiscalization():
+    """Phase 11 follow-up: shows whether a business has ZRA credentials
+    configured, and any confirmed order whose best-effort submission
+    failed (_fiscalize_order() in this file) - the fiscalization
+    equivalent of /orders' flagged-order review queue. Never blocks
+    anything by itself; it's where a failure becomes visible instead of
+    only a log line."""
+    business = request.args.get("business", "").strip()
+    conn = db.connect(DB_PATH)
+    businesses = db.known_businesses(conn)
+    settings, failed = None, []
+    if business:
+        settings = db.get_zra_settings(conn, business)
+        failed = db.orders_needing_fiscalization_retry(conn, business).to_dict(orient="records")
+    conn.close()
+    return render_template(
+        "fiscalization.html", businesses=businesses, business=business or None,
+        settings=settings, failed=failed,
+    )
+
+
+@app.route("/fiscalization/settings", methods=["POST"])
+def save_zra_settings():
+    business = request.form.get("business", "").strip() or "default"
+    fields = {
+        key: request.form.get(key, "").strip()
+        for key in ("server_url", "username", "password", "tpin", "bhf_id", "device_serial")
+    }
+    if not all(fields.values()):
+        flash("All ZRA settings fields are required.", "error")
+        return redirect(url_for("fiscalization", business=business))
+
+    conn = db.connect(DB_PATH)
+    db.save_zra_settings(conn, business, **fields)
+    conn.close()
+    flash(f"ZRA settings saved for '{business}'.", "success")
+    return redirect(url_for("fiscalization", business=business))
+
+
+@app.route("/fiscalization/retry", methods=["POST"])
+def retry_fiscalization():
+    """Re-attempts a previously-failed submission - e.g. after a product's
+    vat_category_code/item_class_code has since been set via /catalog, or
+    ZRA was simply unreachable the first time."""
+    business = request.form.get("business", "").strip() or "default"
+    order_id = request.form.get("order_id", "").strip()
+
+    conn = db.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT invoice_id, customer_name, placed_at FROM orders "
+        "WHERE business = ? AND order_id = ? AND fiscalization_status = 'failed'",
+        (business, order_id),
+    ).fetchone()
+    if row is None:
+        conn.close()
+        flash(f"Order '{order_id}' isn't awaiting a fiscalization retry.", "error")
+        return redirect(url_for("fiscalization", business=business))
+
+    invoice_id, customer_name, placed_at = row
+    _fiscalize_order(conn, business, order_id, invoice_id, customer_name, placed_at)
+    conn.close()
+    flash(f"Retried fiscalization for {order_id} - check the status below.", "info")
+    return redirect(url_for("fiscalization", business=business))
+
+
 def _finalize_order(conn: sqlite3.Connection, business: str, order_id: str,
                      sender_name: str | None, sender_phone: str, raw_message: str,
                      parsed: "orders.ParsedOrder", client: whatsapp.WhatsAppClient) -> None:
@@ -436,6 +502,54 @@ def _finalize_order(conn: sqlite3.Connection, business: str, order_id: str,
         parsed, order_id, sender_name, sender_phone, placed_at, raw_message, invoice_id,
     )
     db.save_order(conn, business, order_dict, line_dicts)
+
+    if parsed.status == "confirmed":
+        _fiscalize_order(conn, business, order_id, invoice_id, sender_name, placed_at)
+
+
+def _fiscalize_order(conn: sqlite3.Connection, business: str, order_id: str, invoice_id: str,
+                      customer_name: str | None, placed_at: str) -> None:
+    """Best-effort ZRA Smart Invoice submission, fired right after order
+    confirmation - see docs/ROADMAP.md's Phase 11 follow-up entry for why
+    it's this moment (VAT invoicing is tied to the sale being invoiced,
+    not to payment being received) and why a failure here must NEVER
+    block the order: a government API being slow, down, or rejecting a
+    submission (e.g. a product still missing vat_category_code) must not
+    stop this business from taking orders. Anything short of a clean
+    success is recorded via mark_order_fiscalization_failed() and
+    surfaced on /fiscalization, not raised.
+
+    Silently does nothing if this business hasn't configured ZRA
+    credentials at all (db.get_zra_settings() returns None) - Phase 11 is
+    opt-in per business, not a requirement every order now has to clear."""
+    settings = db.get_zra_settings(conn, business)
+    if settings is None:
+        return
+
+    try:
+        credentials = zra.ZRACredentials.from_settings_row(settings)
+        order_lines = db.order_lines_for(conn, business, order_id)
+        catalog = db.get_catalog(conn, business).set_index("product_id")
+        line_items = [
+            {
+                "product_id": line.product_id,
+                "name": catalog.loc[line.product_id, "name"],
+                "quantity": line.quantity_requested,
+                "unit_price": line.unit_price,
+                "vat_category_code": catalog.loc[line.product_id, "vat_category_code"],
+                "item_class_code": catalog.loc[line.product_id, "item_class_code"],
+            }
+            for line in order_lines.itertuples()
+        ]
+        sales_dt = placed_at[:10].replace("-", "")
+        payload = zra.build_sales_payload(
+            credentials, invoice_id, sales_dt, customer_name or "", None, line_items,
+        )
+        response = zra.ZRAClient(credentials).submit_sale(payload)
+        db.mark_order_fiscalized(conn, business, order_id, response)
+    except Exception as exc:
+        app.logger.warning("ZRA fiscalization failed for %s/%s: %s", business, order_id, exc)
+        db.mark_order_fiscalization_failed(conn, business, order_id, str(exc))
 
 
 def _handle_incoming_order(conn: sqlite3.Connection, business: str,
