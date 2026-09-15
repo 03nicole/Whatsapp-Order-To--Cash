@@ -20,15 +20,18 @@ from __future__ import annotations
 
 import os
 import secrets
+import sqlite3
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
 from flask import Flask, flash, redirect, render_template, request, send_file, url_for
 from werkzeug.utils import secure_filename
 
-from reconciler import load_invoices, load_momo_statement, reconcile
-from reconciler import db
+from reconciler import load_catalog, load_invoices, load_momo_statement, reconcile
+from reconciler import db, orders, whatsapp
 from reconciler.report import write_report, write_aging_report
 
 APP_DIR = Path(__file__).resolve().parent
@@ -36,6 +39,7 @@ DB_PATH = Path(os.environ.get("RECONCILIATION_DB", APP_DIR / "reconciliation.db"
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "reconciliation-engine-uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
@@ -108,7 +112,7 @@ def do_reconcile():
         momo_path.unlink(missing_ok=True)
 
     conn = db.connect(DB_PATH)
-    invoices = db.merge_persisted_balances(invoices, db.known_balances(conn, business))
+    invoices = db.combine_with_open_invoices(conn, business, invoices)
     momo, skipped = db.filter_new_transactions(momo, db.known_transaction_ids(conn, business))
 
     results = reconcile(invoices, momo, date_window_days=date_window)
@@ -170,6 +174,116 @@ def download(token):
         return redirect(url_for("index"))
     path, friendly_name = entry
     return send_file(path, as_attachment=True, download_name=friendly_name)
+
+
+@app.route("/catalog/import", methods=["POST"])
+def import_catalog():
+    business = request.form.get("business", "").strip() or "default"
+    catalog_file = request.files.get("catalog")
+    if not catalog_file or not catalog_file.filename:
+        flash("Choose a catalog file.")
+        return redirect(url_for("index"))
+
+    try:
+        catalog_path = _save_upload(catalog_file)
+    except ValueError as exc:
+        flash(str(exc))
+        return redirect(url_for("index"))
+
+    try:
+        catalog_df = load_catalog(catalog_path)
+    except ValueError as exc:
+        flash(f"Couldn't read that file: {exc}")
+        return redirect(url_for("index"))
+    finally:
+        catalog_path.unlink(missing_ok=True)
+
+    conn = db.connect(DB_PATH)
+    db.save_catalog(conn, catalog_df, business)
+    conn.close()
+
+    flash(f"Imported {len(catalog_df)} product(s) into the catalog for '{business}'.")
+    return redirect(url_for("index"))
+
+
+@app.route("/orders")
+def orders_review():
+    business = request.args.get("business", "").strip()
+    conn = db.connect(DB_PATH)
+    businesses = db.known_businesses(conn)
+    flagged = db.flagged_orders(conn, business) if business else pd.DataFrame()
+    conn.close()
+    return render_template(
+        "orders.html", businesses=businesses, business=business or None,
+        orders=flagged.to_dict(orient="records"),
+    )
+
+
+def _handle_incoming_order(conn: sqlite3.Connection, business: str,
+                            message: whatsapp.IncomingMessage, client: whatsapp.WhatsAppClient) -> None:
+    """One incoming WhatsApp text message -> a parsed, stock-checked
+    order -> either an invoice row in the EXISTING invoices table (never
+    a parallel schema, per docs/DATA_MODEL.md) or a flagged order a sales
+    agent resolves from the /orders page. Never partially confirms."""
+    catalog_df = db.get_catalog(conn, business)
+    placed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    order_id = message.message_id or uuid.uuid4().hex
+
+    parsed = orders.parse_order_message(message.text, catalog_df)
+    parsed = orders.check_stock(parsed, catalog_df)
+
+    invoice_id = None
+    if parsed.status == "confirmed":
+        invoice = orders.build_invoice(parsed, order_id, message.sender_name,
+                                        message.sender_phone, placed_at)
+        invoice_id = invoice["invoice_id"]
+        db.record_order_invoice(conn, business, invoice)
+        for line in parsed.lines:
+            db.adjust_stock(conn, business, line.product_id, -line.quantity_requested)
+        client.send_text(
+            message.sender_phone,
+            f"Order confirmed - invoice {invoice_id} for K{parsed.amount:,.2f}. "
+            f"Pay via MoMo and we'll confirm once it's received.",
+        )
+    else:
+        client.send_text(
+            message.sender_phone,
+            "Thanks - your order needs a quick check from our team before we confirm it. "
+            "We'll get back to you shortly.",
+        )
+
+    order_dict, line_dicts = orders.order_record(
+        parsed, order_id, message.sender_name, message.sender_phone, placed_at,
+        message.text, invoice_id,
+    )
+    db.save_order(conn, business, order_dict, line_dicts)
+
+
+@app.route("/whatsapp/webhook", methods=["GET"])
+def whatsapp_webhook_verify():
+    challenge = whatsapp.verify_webhook_subscription(request.args, WHATSAPP_VERIFY_TOKEN)
+    if challenge is None:
+        return "Verification failed", 403
+    return challenge, 200
+
+
+@app.route("/whatsapp/webhook", methods=["POST"])
+def whatsapp_webhook_receive():
+    """One webhook URL per business for now - configure it as
+    `/whatsapp/webhook?business=<name>` with the provider. Multi-number
+    routing (mapping a WhatsApp Business phone number ID to a business
+    automatically) is a Phase 5 follow-up, not needed for a single pilot."""
+    business = request.args.get("business", "").strip() or "default"
+    payload = request.get_json(silent=True) or {}
+    messages = whatsapp.parse_webhook_payload(payload)
+
+    conn = db.connect(DB_PATH)
+    client = whatsapp.get_client()
+    for message in messages:
+        _handle_incoming_order(conn, business, message, client)
+    conn.close()
+
+    return "", 200
 
 
 if __name__ == "__main__":

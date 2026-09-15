@@ -33,7 +33,7 @@ def cmd_reconcile(args):
           f"K{momo['amount'].sum():,.2f}")
 
     conn = db.connect(args.db)
-    invoices = db.merge_persisted_balances(invoices, db.known_balances(conn, args.business))
+    invoices = db.combine_with_open_invoices(conn, args.business, invoices)
     momo, skipped = db.filter_new_transactions(momo, db.known_transaction_ids(conn, args.business))
     if skipped:
         print(f"  Skipped {skipped} transaction(s) already processed in a previous run.")

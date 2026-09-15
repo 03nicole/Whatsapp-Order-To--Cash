@@ -30,6 +30,14 @@ INVOICE_ALIASES = {
     "date": ["date", "invoice date", "issued", "issue date", "created"],
 }
 
+CATALOG_ALIASES = {
+    "product_id": ["product_id", "sku", "code", "product code", "item code", "product no"],
+    "name": ["name", "product", "product name", "description", "item"],
+    "unit": ["unit", "uom", "unit of measure", "pack"],
+    "unit_price": ["unit_price", "price", "unit price", "selling price"],
+    "quantity_on_hand": ["quantity_on_hand", "stock", "qty", "quantity", "stock on hand", "qty on hand"],
+}
+
 MOMO_ALIASES = {
     "transaction_id": ["transaction_id", "transaction id", "txn id", "txn",
                         "ref id", "transaction reference", "trans id"],
@@ -134,6 +142,38 @@ def load_invoices(path: str | Path) -> pd.DataFrame:
         print(f"[loaders] Warning: invoice_id is not unique - repeated: {dupes}. "
               f"The matcher will still resolve payments correctly among the open ones, "
               f"but duplicate invoice numbers are worth confirming with the business.")
+
+    return df.reset_index(drop=True)
+
+
+def load_catalog(path: str | Path) -> pd.DataFrame:
+    """
+    Returns a DataFrame with columns:
+    product_id, name, unit, unit_price, quantity_on_hand
+
+    Same alias-matching convention as load_invoices/load_momo_statement -
+    every wholesaler's product export will name these columns differently.
+    """
+    df = _read_any(path)
+    df = _normalize_columns(df, CATALOG_ALIASES)
+    df["product_id"] = _clean_str(df["product_id"])
+    df["name"] = _clean_str(df["name"])
+    df["unit"] = _clean_str(df.get("unit", pd.Series(dtype=object)))
+    df["unit_price"] = pd.to_numeric(df["unit_price"], errors="coerce")
+    df["quantity_on_hand"] = pd.to_numeric(df["quantity_on_hand"], errors="coerce")
+
+    bad_rows = df[df["unit_price"].isna() | df["quantity_on_hand"].isna()]
+    if len(bad_rows):
+        print(f"[loaders] Warning: {len(bad_rows)} catalog row(s) had an "
+              f"unparseable price or stock quantity and were dropped.")
+        df = df.dropna(subset=["unit_price", "quantity_on_hand"])
+    df["quantity_on_hand"] = df["quantity_on_hand"].astype(int)
+
+    dupes = sorted(df.loc[df["product_id"].duplicated(keep=False), "product_id"].unique())
+    if dupes:
+        print(f"[loaders] Warning: product_id is not unique - repeated: {dupes}. "
+              f"The later row wins when this catalog is saved.")
+        df = df.drop_duplicates(subset="product_id", keep="last")
 
     return df.reset_index(drop=True)
 

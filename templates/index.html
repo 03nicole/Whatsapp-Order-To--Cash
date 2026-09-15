@@ -43,4 +43,25 @@
     </form>
     <p class="hint">Who owes you money right now, without re-uploading anything — requires at least one prior reconcile run for that business.</p>
   </section>
+
+  <section class="card">
+    <h2>Product catalog (for WhatsApp order capture)</h2>
+    <form action="{{ url_for('import_catalog') }}" method="post" enctype="multipart/form-data">
+      <label>
+        Business name
+        <input type="text" name="business" list="business-list" placeholder="e.g. Sample Distributor Ltd" required>
+      </label>
+      <label>
+        Catalog file (.csv or .xlsx) — product code, name, unit, price, stock on hand
+        <input type="file" name="catalog" accept=".csv,.xlsx,.xls" required>
+      </label>
+      <button type="submit">Import catalog</button>
+    </form>
+    <p class="hint">
+      Re-importing later updates price/stock for existing product codes rather
+      than duplicating them. A WhatsApp order can only auto-confirm against
+      products already in this catalog — see <a href="{{ url_for('orders_review') }}">flagged orders</a>
+      for anything that couldn't be resolved automatically.
+    </p>
+  </section>
 {% endblock %}

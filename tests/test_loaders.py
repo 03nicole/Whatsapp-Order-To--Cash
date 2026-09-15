@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from reconciler.loaders import load_invoices, load_momo_statement
+from reconciler.loaders import load_catalog, load_invoices, load_momo_statement
 
 
 def _write_csv(path, text):
@@ -123,3 +123,41 @@ def test_momo_drops_unparseable_rows(tmp_path, capsys):
     df = load_momo_statement(csv)
     assert len(df) == 1
     assert "unparseable" in capsys.readouterr().out
+
+
+# --- load_catalog ------------------------------------------------------
+
+def test_catalog_recognizes_aliased_headers(tmp_path):
+    csv = _write_csv(tmp_path / "catalog.csv", (
+        "SKU,Product Name,UOM,Price,Stock\n"
+        "COKE-24,Coca-Cola 300ml 24-pack,box,120,50\n"
+    ))
+    df = load_catalog(csv)
+    assert df.loc[0, "product_id"] == "COKE-24"
+    assert df.loc[0, "name"] == "Coca-Cola 300ml 24-pack"
+    assert df.loc[0, "unit_price"] == 120
+    assert df.loc[0, "quantity_on_hand"] == 50
+    assert df["quantity_on_hand"].dtype.kind == "i"  # int dtype, not float
+
+
+def test_catalog_drops_unparseable_rows(tmp_path, capsys):
+    csv = _write_csv(tmp_path / "catalog.csv", (
+        "SKU,Product Name,UOM,Price,Stock\n"
+        "COKE-24,Coca-Cola,box,120,50\n"
+        "BAD-1,Bad Row,box,not-a-price,10\n"
+    ))
+    df = load_catalog(csv)
+    assert len(df) == 1
+    assert "unparseable" in capsys.readouterr().out
+
+
+def test_catalog_deduplicates_product_id_keeping_last(tmp_path, capsys):
+    csv = _write_csv(tmp_path / "catalog.csv", (
+        "SKU,Product Name,UOM,Price,Stock\n"
+        "COKE-24,Coca-Cola,box,120,50\n"
+        "COKE-24,Coca-Cola,box,130,40\n"
+    ))
+    df = load_catalog(csv)
+    assert len(df) == 1
+    assert df.loc[0, "unit_price"] == 130
+    assert "not unique" in capsys.readouterr().out

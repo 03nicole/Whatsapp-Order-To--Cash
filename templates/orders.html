@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Flagged orders — Reconciliation Engine{% endblock %}
+{% block content %}
+  <section class="card">
+    <h2>Orders needing a human look</h2>
+    <form action="{{ url_for('orders_review') }}" method="get">
+      <label>
+        Business name
+        <input type="text" name="business" list="business-list" value="{{ business or '' }}" required>
+        <datalist id="business-list">
+          {% for b in businesses %}<option value="{{ b }}">{% endfor %}
+        </datalist>
+      </label>
+      <button type="submit">View</button>
+    </form>
+    <p class="hint">
+      An order only ends up here when the system couldn't confidently
+      resolve every line against the catalog, or stock was insufficient —
+      never partially confirmed. Nothing here has touched stock or created
+      an invoice yet.
+    </p>
+  </section>
+
+  {% if business %}
+  <section class="card">
+    <h2>{{ business }}</h2>
+    {% if orders %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Placed</th><th>Customer</th><th>Phone</th><th>Message</th><th>Why it's flagged</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in orders %}
+        <tr>
+          <td>{{ o.placed_at }}</td>
+          <td>{{ o.customer_name or '(unknown)' }}</td>
+          <td>{{ o.customer_phone or '' }}</td>
+          <td>{{ o.raw_message }}</td>
+          <td>{{ o.flag_reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>Nothing flagged for "{{ business }}" right now.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+  <p><a href="{{ url_for('index') }}">&larr; Back</a></p>
+{% endblock %}

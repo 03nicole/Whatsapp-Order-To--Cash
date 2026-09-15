@@ -55,6 +55,48 @@ CREATE TABLE IF NOT EXISTS transactions (
     processed_at     TEXT NOT NULL,
     PRIMARY KEY (business, transaction_id)
 );
+
+-- Phase 5 ("order capture"): a single-warehouse product catalog + stock
+-- ledger, and the orders/order_lines that get parsed out of an incoming
+-- WhatsApp message. See reconciler/orders.py. An order that resolves
+-- cleanly writes a row into `invoices` above through the same path a
+-- manually-uploaded invoice file would - this schema produces invoices,
+-- it doesn't duplicate them.
+CREATE TABLE IF NOT EXISTS products (
+    business          TEXT NOT NULL,
+    product_id        TEXT NOT NULL,  -- short code the catalog/order parser matches on, e.g. "COKE-24"
+    name               TEXT NOT NULL,
+    unit               TEXT,          -- e.g. box, crate, each
+    unit_price         REAL NOT NULL,
+    quantity_on_hand   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (business, product_id)
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+    business        TEXT NOT NULL,
+    order_id        TEXT NOT NULL,
+    customer_name   TEXT,
+    customer_phone  TEXT,
+    placed_at       TEXT NOT NULL,
+    status          TEXT NOT NULL,   -- pending | confirmed | flagged | fulfilled
+    raw_message     TEXT,            -- original WhatsApp text, kept for audit
+    invoice_id      TEXT,            -- set once this order generates an invoice
+    flag_reason     TEXT,            -- why a 'flagged' order needs a human, if any
+    PRIMARY KEY (business, order_id)
+);
+
+CREATE TABLE IF NOT EXISTS order_lines (
+    business             TEXT NOT NULL,
+    order_id             TEXT NOT NULL,
+    line_no              INTEGER NOT NULL,
+    product_id           TEXT,             -- NULL if this line couldn't be resolved to a product
+    raw_text             TEXT NOT NULL,     -- the original segment of the message this line came from
+    quantity_requested   INTEGER,
+    unit_price           REAL,              -- snapshot at order time, not a live catalog reference
+    line_total           REAL,
+    resolution           TEXT NOT NULL,     -- exact_code | unique_name | ambiguous | unknown_product
+    PRIMARY KEY (business, order_id, line_no)
+);
 """
 
 # Aging buckets, in days-outstanding order. Standard AR convention.
@@ -104,6 +146,29 @@ def merge_persisted_balances(invoices_df: pd.DataFrame, balances: dict[str, floa
     known_mask = merged["invoice_id"].isin(balances)
     merged.loc[known_mask, "balance"] = merged.loc[known_mask, "invoice_id"].map(balances)
     return merged
+
+
+def combine_with_open_invoices(conn: sqlite3.Connection, business: str,
+                                invoices_df: pd.DataFrame) -> pd.DataFrame:
+    """merge_persisted_balances() only overrides the balance of invoices
+    already present in `invoices_df` - it can't surface an invoice that
+    exists purely in the database with no accompanying upload, which is
+    exactly what an order-generated invoice is (see orders.py /
+    record_order_invoice). Without this, a business using WhatsApp order
+    capture would have to keep re-uploading a matching invoice file for
+    invoices that never came from a file in the first place, just so a
+    later MoMo statement could be matched against them.
+
+    Applies the usual persisted-balance override, then appends any
+    currently-open invoice this business has on record that isn't part
+    of `invoices_df` at all. Does not mutate `invoices_df`."""
+    merged = merge_persisted_balances(invoices_df, known_balances(conn, business))
+    already_present = set(merged["invoice_id"])
+    other_open = open_invoices(conn, business)
+    extra = other_open[~other_open["invoice_id"].isin(already_present)]
+    if extra.empty:
+        return merged
+    return pd.concat([merged, extra], ignore_index=True)
 
 
 def filter_new_transactions(momo_df: pd.DataFrame, seen_ids: set[str]) -> tuple[pd.DataFrame, int]:
@@ -198,6 +263,106 @@ def aging_report(conn: sqlite3.Connection, business: str, as_of: date | None = N
     df["days_outstanding"] = (pd.Timestamp(as_of) - df["date"]).dt.days
     df["bucket"] = df["days_outstanding"].apply(_bucket)
     return df.sort_values("days_outstanding", ascending=False).reset_index(drop=True)
+
+
+def save_catalog(conn: sqlite3.Connection, catalog_df: pd.DataFrame, business: str) -> None:
+    """Upserts a product catalog (product_id, name, unit, unit_price,
+    quantity_on_hand). Re-importing the same catalog later updates price/
+    stock rather than duplicating products - same upsert-by-business-scoped-
+    key pattern as save_run() uses for invoices."""
+    conn.executemany(
+        """INSERT INTO products (business, product_id, name, unit, unit_price, quantity_on_hand)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT (business, product_id) DO UPDATE SET
+               name = excluded.name,
+               unit = excluded.unit,
+               unit_price = excluded.unit_price,
+               quantity_on_hand = excluded.quantity_on_hand""",
+        [(business, r.product_id, r.name, r.unit, float(r.unit_price), int(r.quantity_on_hand))
+         for r in catalog_df.itertuples()],
+    )
+    conn.commit()
+
+
+def get_catalog(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
+    return pd.read_sql_query(
+        "SELECT product_id, name, unit, unit_price, quantity_on_hand "
+        "FROM products WHERE business = ? ORDER BY product_id",
+        conn, params=(business,),
+    )
+
+
+def adjust_stock(conn: sqlite3.Connection, business: str, product_id: str, delta: int) -> None:
+    """Applies `delta` (negative to consume stock) to one product's
+    quantity_on_hand. Used when an order is confirmed against the catalog."""
+    conn.execute(
+        "UPDATE products SET quantity_on_hand = quantity_on_hand + ? "
+        "WHERE business = ? AND product_id = ?",
+        (delta, business, product_id),
+    )
+    conn.commit()
+
+
+def save_order(conn: sqlite3.Connection, business: str, order: dict, lines: list[dict]) -> None:
+    """Persists one parsed order and its lines. `order` and each entry of
+    `lines` are plain dicts shaped like the `orders`/`order_lines` columns -
+    see reconciler/orders.py, which builds them."""
+    conn.execute(
+        """INSERT INTO orders (business, order_id, customer_name, customer_phone,
+                                placed_at, status, raw_message, invoice_id, flag_reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (business, order_id) DO UPDATE SET
+               status = excluded.status,
+               invoice_id = excluded.invoice_id,
+               flag_reason = excluded.flag_reason""",
+        (business, order["order_id"], order.get("customer_name"), order.get("customer_phone"),
+         order["placed_at"], order["status"], order.get("raw_message"),
+         order.get("invoice_id"), order.get("flag_reason")),
+    )
+    conn.executemany(
+        """INSERT INTO order_lines (business, order_id, line_no, product_id, raw_text,
+                                     quantity_requested, unit_price, line_total, resolution)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (business, order_id, line_no) DO UPDATE SET
+               product_id = excluded.product_id,
+               quantity_requested = excluded.quantity_requested,
+               unit_price = excluded.unit_price,
+               line_total = excluded.line_total,
+               resolution = excluded.resolution""",
+        [(business, order["order_id"], i, l.get("product_id"), l["raw_text"],
+          l.get("quantity_requested"), l.get("unit_price"), l.get("line_total"), l["resolution"])
+         for i, l in enumerate(lines)],
+    )
+    conn.commit()
+
+
+def record_order_invoice(conn: sqlite3.Connection, business: str, invoice: dict) -> None:
+    """Writes one invoice generated from a confirmed order into the SAME
+    `invoices` table a manually-uploaded invoice file lands in - this is
+    the whole point of Phase 5: a new invoice *producer*, not a parallel
+    reconciliation path. `invoice` is a plain dict with invoice_id,
+    customer_name, customer_phone, amount, date (ISO string)."""
+    conn.execute(
+        """INSERT INTO invoices (business, invoice_id, customer_name, customer_phone,
+                                  amount, date, balance)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (business, invoice_id) DO NOTHING""",
+        (business, invoice["invoice_id"], invoice.get("customer_name"),
+         invoice.get("customer_phone"), float(invoice["amount"]), invoice["date"],
+         float(invoice["amount"])),
+    )
+    conn.commit()
+
+
+def flagged_orders(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
+    """Orders that couldn't be auto-confirmed (ambiguous/unknown product,
+    insufficient stock) - the order-capture equivalent of the
+    reconciliation engine's needs_review sheet. A human resolves these."""
+    return pd.read_sql_query(
+        "SELECT order_id, customer_name, customer_phone, placed_at, raw_message, flag_reason "
+        "FROM orders WHERE business = ? AND status = 'flagged' ORDER BY placed_at",
+        conn, params=(business,),
+    )
 
 
 def aging_summary_by_customer(aging_df: pd.DataFrame) -> pd.DataFrame:
