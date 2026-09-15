@@ -129,6 +129,44 @@ def test_webhook_does_not_double_process_a_retried_delivery(client, monkeypatch)
     assert transactions == 1  # not recorded twice
 
 
+def test_webhook_sends_a_whatsapp_payment_confirmation_on_a_full_match(client, monkeypatch):
+    """The other half of the order-confirmation promise ("Pay via MoMo
+    and we'll confirm once it's received") - a live webhook payment that
+    fully settles an invoice should actually tell the customer."""
+    monkeypatch.setattr(app_module, "FLUTTERWAVE_SECRET_HASH", "test-secret")
+    sent = []
+
+    class RecordingClient:
+        def send_text(self, to_phone, message):
+            sent.append((to_phone, message))
+
+    monkeypatch.setattr(app_module.whatsapp, "get_client", lambda: RecordingClient())
+    _upload_invoice(client, amount=1750, phone="0977111111")
+
+    r = _post_webhook(client, _zm_payload(1750, sender_phone="260977111111"))
+    assert r.status_code == 200
+
+    assert len(sent) == 1
+    to_phone, message = sent[0]
+    assert to_phone == "0977111111"  # the invoice's own customer_phone, not the payer's raw sender_phone
+    assert "INV-1" in message
+    assert "1,750" in message or "1750" in message
+
+
+def test_webhook_does_not_notify_on_an_unmatched_payment(client, monkeypatch):
+    monkeypatch.setattr(app_module, "FLUTTERWAVE_SECRET_HASH", "test-secret")
+    sent = []
+
+    class RecordingClient:
+        def send_text(self, to_phone, message):
+            sent.append((to_phone, message))
+
+    monkeypatch.setattr(app_module.whatsapp, "get_client", lambda: RecordingClient())
+    _post_webhook(client, _zm_payload(999))  # no invoices at all for WABiz
+
+    assert sent == []
+
+
 def test_webhook_leaves_an_unmatched_payment_for_review(client, monkeypatch):
     monkeypatch.setattr(app_module, "FLUTTERWAVE_SECRET_HASH", "test-secret")
     r = _post_webhook(client, _zm_payload(999))  # no invoices at all for WABiz

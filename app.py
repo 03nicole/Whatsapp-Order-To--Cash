@@ -431,6 +431,32 @@ def whatsapp_webhook_receive():
     return "", 200
 
 
+def _notify_customers_of_payment(results: dict, client: whatsapp.WhatsAppClient) -> None:
+    """The other half of _finalize_order()'s "Pay via MoMo and we'll
+    confirm once it's received" promise - Phase 10 matched a live
+    payment to its invoice but never actually told the customer who was
+    told to expect that confirmation. Only for a FULL match: a split
+    payment (results["partial"]) still leaves a real balance open, so
+    telling that customer "settled" would be wrong. Only for invoices
+    with a phone on file - a manually-uploaded invoice from a bulk
+    statement import may not have one, and that's fine, it just doesn't
+    get a text."""
+    if results["matched"].empty:
+        return
+    all_invoices = results["all_invoices"].set_index("invoice_id")
+    for row in results["matched"].to_dict(orient="records"):
+        invoice_id = row.get("matched_invoice")
+        if invoice_id not in all_invoices.index:
+            continue
+        phone = all_invoices.loc[invoice_id, "customer_phone"]
+        if not phone or pd.isna(phone):
+            continue
+        client.send_text(
+            phone,
+            f"Payment received - invoice {invoice_id} (K{row['amount']:,.2f}) is now settled. Thanks for your order!",
+        )
+
+
 @app.route("/momo/webhook", methods=["POST"])
 def momo_webhook_receive():
     """Phase 10's live-reconciliation path, built against Flutterwave -
@@ -460,6 +486,7 @@ def momo_webhook_receive():
     if not momo_df.empty:
         results = reconcile(invoices, momo_df)
         db.save_run(conn, results, business)
+        _notify_customers_of_payment(results, whatsapp.get_client())
     conn.close()
 
     return "", 200
