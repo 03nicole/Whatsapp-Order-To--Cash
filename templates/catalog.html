@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Catalog & stock — Reconciliation Engine{% endblock %}
+{% block content %}
+  <section class="card">
+    <h2>Catalog & stock</h2>
+    <form action="{{ url_for('catalog_manage') }}" method="get">
+      <label>
+        Business name
+        <input type="text" name="business" list="business-list" value="{{ business or '' }}" required>
+        <datalist id="business-list">
+          {% for b in businesses %}<option value="{{ b }}">{% endfor %}
+        </datalist>
+      </label>
+      <button type="submit">View</button>
+    </form>
+  </section>
+
+  {% if business %}
+  <section class="card">
+    <h2>{{ business }} — products</h2>
+    {% if products %}
+    <table class="data-table">
+      <thead>
+        <tr><th>Code</th><th>Name</th><th>Unit</th><th>Price</th><th>Stock on hand</th></tr>
+      </thead>
+      <tbody>
+        {% for p in products %}
+        <tr>
+          <td>{{ p.product_id }}</td>
+          <td>{{ p.name }}</td>
+          <td>{{ p.unit }}</td>
+          <td>K{{ "{:,.2f}".format(p.unit_price) }}</td>
+          <td>{{ p.quantity_on_hand }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>No products imported yet for "{{ business }}" — use the catalog import form on the homepage.</p>
+    {% endif %}
+  </section>
+
+  {% if products %}
+  <section class="card">
+    <h2>Adjust stock</h2>
+    <form action="{{ url_for('adjust_stock') }}" method="post">
+      <input type="hidden" name="business" value="{{ business }}">
+      <label>
+        Product code
+        <input type="text" name="product_id" list="product-list" required>
+        <datalist id="product-list">
+          {% for p in products %}<option value="{{ p.product_id }}">{{ p.name }}</option>{% endfor %}
+        </datalist>
+      </label>
+      <label>
+        Change (positive to receive stock, negative to correct a shortfall — e.g. 20 or -5)
+        <input type="number" name="delta" required>
+      </label>
+      <label>
+        Reason (optional, but shows up in the history below)
+        <input type="text" name="reason" placeholder="e.g. received new stock, recount correction">
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+    <p class="hint">
+      Never re-imports the whole catalog — this changes one product's stock
+      on hand directly, and every change (including stock consumed by a
+      confirmed WhatsApp order) is logged below.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Recent stock changes</h2>
+    {% if history %}
+    <table class="data-table">
+      <thead>
+        <tr><th>When</th><th>Product</th><th>Change</th><th>Reason</th></tr>
+      </thead>
+      <tbody>
+        {% for h in history %}
+        <tr>
+          <td>{{ h.adjusted_at }}</td>
+          <td>{{ h.product_id }}</td>
+          <td>{{ "%+d"|format(h.delta) }}</td>
+          <td>{{ h.reason or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>No stock changes logged yet.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+  {% endif %}
+  <p><a href="{{ url_for('index') }}">&larr; Back</a></p>
+{% endblock %}

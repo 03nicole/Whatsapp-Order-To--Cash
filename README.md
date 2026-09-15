@@ -11,14 +11,16 @@ SaaS yet.
 This is one component of a larger confirmed product direction — a
 WhatsApp Order-to-Cash platform for FMCG wholesalers/distributors
 (Zambia first). This repo now covers the **reconciliation stage**
-(below) *and* Phase 5, **WhatsApp order capture → invoice generation**
+(below), Phase 5, **WhatsApp order capture → invoice generation**
 (`reconciler/orders.py`, `reconciler/whatsapp.py` — a structured,
 catalog-driven order-parsing waterfall with the same "never guess when
 unsure" principle as the matcher, gated by a stock check, writing
-straight into the same `invoices` table a manual upload would). Deeper
-stock management, warehouse, and delivery are still scoped but not yet
-built — see [`docs/ROADMAP.md`](docs/ROADMAP.md) for exactly where the
-line is and why. Full system analysis:
+straight into the same `invoices` table a manual upload would), and
+Phase 6, **stock management** (receive/correct stock for one product
+without re-importing the whole catalog, with a full audit trail — see
+"Order capture" below). Warehouse and delivery are still scoped but not
+yet built — see [`docs/ROADMAP.md`](docs/ROADMAP.md) for exactly where
+the line is and why. Full system analysis:
 
 - [Requirements](docs/REQUIREMENTS.md) — problem statement, ICP, actors, functional/non-functional requirements, scope
 - [Architecture](docs/ARCHITECTURE.md) — component design, reference systems (Wasoko, Twiga Foods, Safaricom Daraja/M-Pesa, EU PEPPOL/EN16931), tech stack decisions
@@ -152,6 +154,16 @@ of it - visible on the web UI's `/orders` page. A cleanly-resolved order
 writes an invoice, decrements stock, and confirms back to the customer
 over WhatsApp (or into the logging client's record, in dev).
 
+### Stock management
+
+Phase 6: the `/catalog` page (linked from the homepage) shows a
+business's current catalog and lets you receive new stock or correct a
+miscount for one product, without re-importing the whole catalog file.
+Every change - a manual adjustment or stock an order consumed - is
+logged to a visible history with a reason, the same "every automated
+decision is traceable" principle the reconciliation engine already
+applies to `match_rule` on transactions.
+
 ## Tests
 
 ```bash
@@ -212,9 +224,9 @@ you've now made the tool handle.
 - **No free-text order parsing.** Product references must match a
   catalog code or name closely enough to resolve uniquely; "10 boxes of
   the usual" won't. By design for now — see `docs/ROADMAP.md` Phase 5.
-- **Stock can only be adjusted by re-importing the whole catalog file.**
-  No UI yet for receiving new stock or correcting a miscount in place —
-  see `docs/ROADMAP.md` Phase 6.
+- **Stock is single-warehouse only, with no batches or expiry tracking.**
+  Fine for the current ICP (1–3 warehouses); multi-warehouse allocation
+  is explicitly deferred — see `docs/DATA_MODEL.md`.
 
 ## What the interviews should tell you before you build past this
 

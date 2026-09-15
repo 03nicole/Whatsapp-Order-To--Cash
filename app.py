@@ -203,7 +203,48 @@ def import_catalog():
     conn.close()
 
     flash(f"Imported {len(catalog_df)} product(s) into the catalog for '{business}'.")
-    return redirect(url_for("index"))
+    return redirect(url_for("catalog_manage", business=business))
+
+
+@app.route("/catalog")
+def catalog_manage():
+    business = request.args.get("business", "").strip()
+    conn = db.connect(DB_PATH)
+    businesses = db.known_businesses(conn)
+    catalog_rows, history_rows = [], []
+    if business:
+        catalog_rows = db.get_catalog(conn, business).to_dict(orient="records")
+        history_rows = db.stock_history(conn, business).head(20).to_dict(orient="records")
+    conn.close()
+    return render_template(
+        "catalog.html", businesses=businesses, business=business or None,
+        products=catalog_rows, history=history_rows,
+    )
+
+
+@app.route("/catalog/adjust", methods=["POST"])
+def adjust_stock():
+    business = request.form.get("business", "").strip()
+    product_id = request.form.get("product_id", "").strip()
+    reason = request.form.get("reason", "").strip() or None
+    try:
+        delta = int(request.form.get("delta", ""))
+    except ValueError:
+        flash("Stock change must be a whole number (e.g. 20 or -5).")
+        return redirect(url_for("catalog_manage", business=business))
+
+    conn = db.connect(DB_PATH)
+    exists = product_id in set(db.get_catalog(conn, business)["product_id"])
+    if not exists:
+        conn.close()
+        flash(f"No product '{product_id}' in the catalog for '{business}'.")
+        return redirect(url_for("catalog_manage", business=business))
+
+    db.adjust_stock(conn, business, product_id, delta, reason=reason)
+    conn.close()
+
+    flash(f"Adjusted {product_id} by {delta:+d}" + (f" ({reason})" if reason else "") + ".")
+    return redirect(url_for("catalog_manage", business=business))
 
 
 @app.route("/orders")
@@ -239,7 +280,8 @@ def _handle_incoming_order(conn: sqlite3.Connection, business: str,
         invoice_id = invoice["invoice_id"]
         db.record_order_invoice(conn, business, invoice)
         for line in parsed.lines:
-            db.adjust_stock(conn, business, line.product_id, -line.quantity_requested)
+            db.adjust_stock(conn, business, line.product_id, -line.quantity_requested,
+                             reason=f"order:{order_id}", adjusted_at=placed_at)
         client.send_text(
             message.sender_phone,
             f"Order confirmed - invoice {invoice_id} for K{parsed.amount:,.2f}. "

@@ -67,6 +67,94 @@ def test_import_catalog_rejects_missing_file(client):
     assert "Choose a catalog file" in r.get_data(as_text=True)
 
 
+# --- /catalog stock management ----------------------------------------------
+
+def test_catalog_page_lists_products_and_no_history_initially(client):
+    _import_catalog(client)
+    r = client.get("/catalog", query_string={"business": "WABiz"})
+    body = r.get_data(as_text=True)
+    assert "COKE-24" in body
+    assert "No stock changes logged yet" in body
+
+
+def test_adjust_stock_receives_new_stock(client):
+    _import_catalog(client)
+    r = client.post("/catalog/adjust", data={
+        "business": "WABiz", "product_id": "COKE-24", "delta": "20", "reason": "new delivery",
+    }, follow_redirects=True)
+    body = r.get_data(as_text=True)
+    assert "Adjusted COKE-24 by +20" in body
+    assert "new delivery" in body
+
+    conn = app_module.db.connect(app_module.DB_PATH)
+    catalog = app_module.db.get_catalog(conn, "WABiz")
+    conn.close()
+    coke = catalog[catalog["product_id"] == "COKE-24"].iloc[0]
+    assert coke["quantity_on_hand"] == 70  # 50 + 20
+
+
+def test_adjust_stock_can_correct_downward(client):
+    _import_catalog(client)
+    client.post("/catalog/adjust", data={
+        "business": "WABiz", "product_id": "COKE-24", "delta": "-15", "reason": "recount",
+    })
+    conn = app_module.db.connect(app_module.DB_PATH)
+    catalog = app_module.db.get_catalog(conn, "WABiz")
+    conn.close()
+    coke = catalog[catalog["product_id"] == "COKE-24"].iloc[0]
+    assert coke["quantity_on_hand"] == 35  # 50 - 15
+
+
+def test_adjust_stock_rejects_unknown_product(client):
+    _import_catalog(client)
+    r = client.post("/catalog/adjust", data={
+        "business": "WABiz", "product_id": "NOPE-1", "delta": "10",
+    }, follow_redirects=True)
+    assert "No product" in r.get_data(as_text=True)
+    assert "NOPE-1" in r.get_data(as_text=True)
+
+
+def test_adjust_stock_rejects_non_integer_delta(client):
+    _import_catalog(client)
+    r = client.post("/catalog/adjust", data={
+        "business": "WABiz", "product_id": "COKE-24", "delta": "not-a-number",
+    }, follow_redirects=True)
+    assert "whole number" in r.get_data(as_text=True)
+
+
+def test_catalog_page_shows_adjustment_history_newest_first(client):
+    # follow_redirects=True on each POST so its flash message is consumed
+    # on that request's own redirect target, instead of queuing up in the
+    # session and contaminating the later GET this test actually inspects.
+    _import_catalog(client)
+    client.post("/catalog/adjust", data={
+        "business": "WABiz", "product_id": "COKE-24", "delta": "20", "reason": "first delivery",
+    }, follow_redirects=True)
+    client.post("/catalog/adjust", data={
+        "business": "WABiz", "product_id": "COKE-24", "delta": "-5", "reason": "damaged stock",
+    }, follow_redirects=True)
+    r = client.get("/catalog", query_string={"business": "WABiz"})
+    body = r.get_data(as_text=True)
+    history_start = body.index("Recent stock changes")
+    assert body.index("damaged stock", history_start) < body.index("first delivery", history_start)
+
+
+def test_order_consumption_also_appears_in_stock_history(client):
+    """adjust_stock() is the single path both manual corrections and order
+    confirmation go through - the audit trail should show both."""
+    _import_catalog(client)
+    client.post("/whatsapp/webhook", query_string={"business": "WABiz"},
+                data=json.dumps(_webhook_payload("10 COKE-24")),
+                content_type="application/json")
+
+    conn = app_module.db.connect(app_module.DB_PATH)
+    history = app_module.db.stock_history(conn, "WABiz")
+    conn.close()
+    assert len(history) == 1
+    assert history.iloc[0]["delta"] == -10
+    assert history.iloc[0]["reason"].startswith("order:")
+
+
 # --- webhook verification (GET) ---------------------------------------------
 
 def test_webhook_verification_succeeds_with_correct_token(client):

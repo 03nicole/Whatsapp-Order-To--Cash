@@ -61,7 +61,9 @@
       Re-importing later updates price/stock for existing product codes rather
       than duplicating them. A WhatsApp order can only auto-confirm against
       products already in this catalog — see <a href="{{ url_for('orders_review') }}">flagged orders</a>
-      for anything that couldn't be resolved automatically.
+      for anything that couldn't be resolved automatically, or
+      <a href="{{ url_for('catalog_manage') }}">manage stock</a> to receive new
+      stock or correct a count without re-importing the whole file.
     </p>
   </section>
 {% endblock %}

@@ -66,6 +66,49 @@ def test_adjust_stock_applies_delta(conn, catalog_df):
     assert result.loc[result["product_id"] == "COKE-24", "quantity_on_hand"].iloc[0] == 40
 
 
+def test_adjust_stock_can_increase_quantity(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    db.adjust_stock(conn, "biz", "COKE-24", 20, reason="received new stock")
+    result = db.get_catalog(conn, "biz")
+    assert result.loc[result["product_id"] == "COKE-24", "quantity_on_hand"].iloc[0] == 70
+
+
+def test_adjust_stock_logs_every_change(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    # Explicit, distinct timestamps - adjust_stock's default (now(), second
+    # precision) could tie two calls in the same test and make "newest
+    # first" ordering non-deterministic.
+    db.adjust_stock(conn, "biz", "COKE-24", -10, reason="order:abc123",
+                     adjusted_at="2026-01-01T10:00:00")
+    db.adjust_stock(conn, "biz", "COKE-24", 25, reason="received new stock",
+                     adjusted_at="2026-01-01T11:00:00")
+
+    history = db.stock_history(conn, "biz")
+    assert len(history) == 2
+    # newest first
+    assert history.iloc[0]["reason"] == "received new stock"
+    assert history.iloc[0]["delta"] == 25
+    assert history.iloc[1]["reason"] == "order:abc123"
+    assert history.iloc[1]["delta"] == -10
+
+
+def test_stock_history_filters_by_product(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz")
+    db.adjust_stock(conn, "biz", "COKE-24", -5)
+    db.adjust_stock(conn, "biz", "FANTA-24", -3)
+
+    history = db.stock_history(conn, "biz", product_id="COKE-24")
+    assert len(history) == 1
+    assert history.iloc[0]["product_id"] == "COKE-24"
+
+
+def test_stock_history_is_scoped_by_business(conn, catalog_df):
+    db.save_catalog(conn, catalog_df, "biz-a")
+    db.adjust_stock(conn, "biz-a", "COKE-24", -5)
+    assert len(db.stock_history(conn, "biz-a")) == 1
+    assert len(db.stock_history(conn, "biz-b")) == 0
+
+
 # --- orders -----------------------------------------------------------------
 
 def test_save_order_persists_order_and_lines(conn):

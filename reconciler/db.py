@@ -22,6 +22,7 @@ service — no reason to run a database server for that yet.
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -96,6 +97,22 @@ CREATE TABLE IF NOT EXISTS order_lines (
     line_total           REAL,
     resolution           TEXT NOT NULL,     -- exact_code | unique_name | ambiguous | unknown_product
     PRIMARY KEY (business, order_id, line_no)
+);
+
+-- Phase 6 ("stock management"): every change to quantity_on_hand outside
+-- a full catalog re-import goes through adjust_stock() below and is
+-- logged here - order consumption (reason 'order:<order_id>') and manual
+-- corrections (received stock, recount) alike. Same "every automated
+-- decision is traceable" principle as match_rule on transactions, applied
+-- to stock instead of money.
+CREATE TABLE IF NOT EXISTS stock_adjustments (
+    business        TEXT NOT NULL,
+    adjustment_id   TEXT NOT NULL,
+    product_id      TEXT NOT NULL,
+    delta           INTEGER NOT NULL,
+    reason          TEXT,
+    adjusted_at     TEXT NOT NULL,
+    PRIMARY KEY (business, adjustment_id)
 );
 """
 
@@ -292,15 +309,43 @@ def get_catalog(conn: sqlite3.Connection, business: str) -> pd.DataFrame:
     )
 
 
-def adjust_stock(conn: sqlite3.Connection, business: str, product_id: str, delta: int) -> None:
+def adjust_stock(conn: sqlite3.Connection, business: str, product_id: str, delta: int,
+                  reason: str | None = None, adjusted_at: str | None = None) -> None:
     """Applies `delta` (negative to consume stock) to one product's
-    quantity_on_hand. Used when an order is confirmed against the catalog."""
+    quantity_on_hand and logs it to stock_adjustments - used both when an
+    order is confirmed (reason `order:<order_id>`) and for a manual
+    correction/stock receipt (reason from the person making it). Every
+    change to stock outside a full catalog re-import goes through here,
+    so stock_adjustments is a complete audit trail, not a partial one."""
     conn.execute(
         "UPDATE products SET quantity_on_hand = quantity_on_hand + ? "
         "WHERE business = ? AND product_id = ?",
         (delta, business, product_id),
     )
+    adjusted_at = adjusted_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.execute(
+        """INSERT INTO stock_adjustments (business, adjustment_id, product_id, delta, reason, adjusted_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (business, uuid.uuid4().hex, product_id, delta, reason, adjusted_at),
+    )
     conn.commit()
+
+
+def stock_history(conn: sqlite3.Connection, business: str, product_id: str | None = None) -> pd.DataFrame:
+    """Every logged stock_adjustments row for a business, newest first -
+    optionally filtered to one product. Read-only view onto adjust_stock's
+    audit trail. Ties on adjusted_at (timespec="seconds" - two changes in
+    the same second are entirely plausible) break on rowid, SQLite's
+    implicit insertion-order column, so "newest first" stays deterministic
+    instead of depending on unspecified tie behavior."""
+    query = ("SELECT product_id, delta, reason, adjusted_at FROM stock_adjustments "
+             "WHERE business = ?")
+    params: list = [business]
+    if product_id:
+        query += " AND product_id = ?"
+        params.append(product_id)
+    query += " ORDER BY adjusted_at DESC, rowid DESC"
+    return pd.read_sql_query(query, conn, params=params)
 
 
 def save_order(conn: sqlite3.Connection, business: str, order: dict, lines: list[dict]) -> None:

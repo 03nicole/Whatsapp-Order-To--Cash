@@ -1,8 +1,8 @@
 # Roadmap — WhatsApp Order-to-Cash for FMCG Distributors
 
 See [REQUIREMENTS.md](REQUIREMENTS.md) and [ARCHITECTURE.md](ARCHITECTURE.md)
-for the reasoning behind each phase. Phases 1–5 are **done and tested**;
-everything from Phase 6 is scoped but not yet built. Each phase names its
+for the reasoning behind each phase. Phases 1–6 are **done and tested**;
+everything from Phase 7 is scoped but not yet built. Each phase names its
 exit criteria — the point at which it's proven enough to justify starting
 the next one — because building ahead of validation is exactly the
 mistake this project has avoided so far (see the original README's own
@@ -19,6 +19,7 @@ happened once the CLI's core was proven and tested).
 | 3 | Split-payment detection | One invoice fully paid + remainder credited to another, surfaced (never auto-applied) in the review sheet |
 | 4 | Local web UI (`app.py`) | Upload → outcome counts → downloadable Excel report; aging view; 10 tests |
 | 5 | WhatsApp order capture → invoice generation (`orders.py`, `whatsapp.py`) | Structured catalog-code/name parsing waterfall (never guesses on an ambiguous or unknown product, exactly like the reconciliation waterfall never guesses on amount alone); stock check gates confirmation; a confirmed order writes into the **same** `invoices` table a manual upload would. Proven with a real webhook payload driven against a live running server, not just the test client — see the "end-to-end" test below. `matcher.py` and `report.py` untouched; `db.py` gained new tables/helpers plus one fix (`combine_with_open_invoices` — see below) |
+| 6 | Stock management beyond catalog re-import (`/catalog` page, `db.adjust_stock`/`stock_history`) | Receive new stock or correct a count for one product without re-uploading the whole file; every change — manual or order-driven — is logged to a `stock_adjustments` audit trail (same "every decision is traceable" principle as `match_rule`, applied to stock). 12 new tests, verified live against the running server |
 
 **One thing Phase 5 exposed and fixed in the existing persistence layer:**
 `merge_persisted_balances()` only overrides the balance of an invoice
@@ -34,20 +35,6 @@ in `tests/test_orders_app.py`, which drives the real `/reconcile` web route
 end to end, and by dedicated tests in `test_orders_db.py`.
 
 ## Next
-
-### Phase 6 — Stock management beyond catalog re-import
-**What's already done, as part of Phase 5:** the stock check itself
-(`orders.check_stock`) — an order can't confirm without enough
-`quantity_on_hand`, and re-importing the catalog CSV updates stock. No
-batches, expiry, or multi-warehouse logic, matching the single-warehouse
-ICP.
-**What's still missing:** any way to adjust stock *without* re-uploading
-the whole catalog — receiving new stock, correcting a miscount, voiding a
-flagged order's would-be reservation. Right now the only lever is a full
-catalog re-import.
-**Exit criteria:** the pilot's actual catalog size/complexity and how
-often stock actually changes are known, and this simple model either
-holds up or names exactly what's missing.
 
 ### Phase 7 — Warehouse fulfillment tracking *(validation-gated)*
 **Goal:** track pick/pack status for a confirmed order.
@@ -96,9 +83,10 @@ explicit about which one has actually happened for which decision:
    manual reconciliation is costing them real hours or money). **This has
    not been done yet** — it's the original README's caution, and it
    still gates Phases 7–11 specifically, even though the market-level
-   case for the overall direction is strong. Phase 5 was built ahead of
-   it deliberately, on the reasoning that it extends the already-
-   validated reconciliation engine (every new invoice still lands in the
-   same table, still goes through the same waterfall) rather than
-   committing to warehouse/delivery complexity; Phase 6 is the same kind
-   of low-risk extension. Phases 7 onward are not, and still wait.
+   case for the overall direction is strong. Phases 5 and 6 were built
+   ahead of it deliberately, on the reasoning that both extend the
+   already-validated reconciliation engine (every new invoice still
+   lands in the same table, still goes through the same waterfall;
+   every stock change is logged the same way a match rule is) rather
+   than committing to warehouse/delivery complexity. Phases 7 onward are
+   not that kind of low-risk extension, and still wait.
