@@ -76,10 +76,22 @@ the criteria, but the interview structure, scoring, and what to do with
 the result per prospect.
 
 1. **Market-level validation** (funded regional comps — Wasoko, Twiga,
-   Chpter, Sukhiba — plus the Smart Invoice regulatory tailwind and the
-   absence of an entrenched Zambian competitor). **This has been done.**
-   It's what justified choosing this idea over Contractor Operations OS
-   or Garage Management OS.
+   Chpter, Sukhiba — plus the Smart Invoice regulatory tailwind, which
+   desk research confirms is *already mandatory* for VAT-registered
+   taxpayers since July 2024, not just an upcoming tailwind).
+   **This has been done, with one correction as of 2026-09-15:** Wasoko
+   itself is already operating in Zambia (Lusaka as its Southern Africa
+   hub since May 2023) — not an entrenched competitor for *this
+   product* specifically (it's a direct-to-retailer distributor, not
+   software sold to distributors — see
+   [ARCHITECTURE.md](ARCHITECTURE.md#wasoko-formerly-sokowatch--now-operating-in-zambia-itself-not-just-a-reference-market)),
+   but its presence changes what "no entrenched Zambian competitor"
+   actually means and is now a specific thing to ask prospects about.
+   Sukhiba (the closer direct analog — B2B WhatsApp commerce sold *to*
+   distributors) has no confirmed Zambia presence yet. This was still
+   enough to justify choosing this idea over Contractor Operations OS
+   or Garage Management OS, but the "blank slate" framing needs
+   updating, not repeating uncritically.
 2. **Direct field validation** (watching real Lusaka distributors
    reconcile their own payments; confirming they have exportable
    invoices/statements, that customers pay into business-owned MoMo

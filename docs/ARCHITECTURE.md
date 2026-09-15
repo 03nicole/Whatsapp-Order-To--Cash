@@ -35,19 +35,55 @@ These are patterns to borrow, not products to clone — named specifically
 so decisions can be checked against a real precedent instead of
 first-principles guessing.
 
-### Wasoko (formerly Sokowatch) — Kenya/Tanzania/Uganda/Rwanda, B2B FMCG distribution to informal retailers
+### Wasoko (formerly Sokowatch) — now operating in Zambia itself, not just a reference market
+**Correction (2026-09-15, via web research — see sources at the end of
+this section):** Wasoko expanded into Zambia in May 2023, using **Lusaka
+as its Southern Africa hub**, $1m+ committed in year one, hub-and-spoke
+logistics. This is not a comparable-market reference anymore — it is a
+live presence in the exact target city.
 **Pattern borrowed:** order aggregation from many small, repeat B2B
 customers into one system, a warehouse-fulfillment-then-delivery pipeline,
 and (later, once order history accumulates) embedded credit scored off
 that history. This directly informs the shape of Phases 7–9 in the
 roadmap.
 **Where the pattern *doesn't* transfer:** Wasoko operates its own
-warehouses and fleet — it *is* the distributor. We're building software
-*for* a distributor who already owns the warehouse and the customer
-relationship. Our "warehouse" module is fulfillment tracking for someone
-else's warehouse, not logistics operations of our own. Worth restating
-whenever a Wasoko-inspired feature is being scoped, so we don't
-accidentally design for the wrong side of that relationship.
+warehouses and fleet and sells directly to retailers — it *is* the
+distributor, disintermediating the ones already there. This project
+builds software *for* a distributor who already owns the warehouse and
+the customer relationship, so Wasoko isn't a head-to-head competitor for
+*this product* - but it is direct competition for whichever independent
+Lusaka wholesaler becomes a pilot customer, and that cuts two ways worth
+asking about directly (see
+[VALIDATION_INTERVIEW_GUIDE.md](VALIDATION_INTERVIEW_GUIDE.md)): a
+wholesaler who feels threatened by Wasoko may have a sharper reason to
+modernize, or may already be shrinking and a poor pilot candidate. Either
+way, Wasoko's presence is itself evidence that app/chat-based ordering
+behavior already works in this exact market - the core behavioral
+assumption the whole plan depends on.
+Sources: [TechCabal](https://techcabal.com/2023/05/12/wasoko-expands-operations-to-southern-africa-with-launch-in-zambia/),
+[African Business](https://african.business/2023/05/quick-reads/retail-startup-wasoko-to-invest-over-1m-in-zambia-expansion)
+
+### Sukhiba — pan-African/India, the closest direct product analog
+**Pattern borrowed:** unlike Wasoko, Sukhiba doesn't own inventory or
+warehouses - it's B2B software *sold to* manufacturers/distributors,
+letting them take orders, run a product catalog, and collect payment
+through WhatsApp for their own MSME retail customers. This is
+architecturally the closest existing match to this project's Phase 5.
+Sukhiba reports enabling WhatsApp commerce for 30+ companies serving
+~15,000 MSMEs across eight markets in Africa and India.
+**No confirmed Zambia presence found** as of this research (2026-09-15) -
+worth re-checking periodically rather than treating as settled either way.
+Source: [Accion](https://www.accion.org/article/sukhiba-aims-to-redefine-b2b-commerce-in-africa-using-whatsapp/)
+
+### ChatCash — Zimbabwe, the nearest regional player to watch
+Harare-based WhatsApp/Messenger commerce + payments platform, 10,000 SMEs
+onboarded as of 2026, raising a Series A to scale toward 30,000 clients,
+with stated expansion plans to South Africa, Nigeria, and Rwanda - not
+Zambia yet, but geographically and economically closer to Zambia than any
+Kenya-based comp. Notably localizes to Shona/Ndebele NLP, underscoring
+that local-language handling is a real differentiator in this category,
+not a nice-to-have.
+Source: [TechCabal](https://techcabal.com/2025/09/05/chatcash-turns-chats-into-commerce/)
 
 ### Twiga Foods — Kenya, B2B fresh-produce supply chain
 **Pattern borrowed:** the core validated behavior — small businesses will

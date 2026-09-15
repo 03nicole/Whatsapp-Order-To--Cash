@@ -33,6 +33,16 @@ disqualifier for reconciliation-only interest, but it does mean the
 note that explicitly rather than scoring the interview as a clean pass or
 fail.
 
+**One more question, added 2026-09-15 after desk research confirmed
+Wasoko already operates in Zambia (Lusaka as its Southern Africa hub
+since 2023 — see [ARCHITECTURE.md](ARCHITECTURE.md#wasoko-formerly-sokowatch--now-operating-in-zambia-itself-not-just-a-reference-market)):**
+does this business see Wasoko (or a similar direct-to-retailer platform)
+as a competitive threat? This cuts two ways worth distinguishing in your
+notes — a business that feels threatened may have a sharper reason to
+modernize and defend its customer relationships, while one that's
+already losing volume to it may be a poor pilot candidate regardless of
+how well the other criteria score.
+
 ## The three validation criteria
 
 Ask about each one specifically — don't let the conversation stay
