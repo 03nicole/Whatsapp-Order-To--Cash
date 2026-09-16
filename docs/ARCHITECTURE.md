@@ -295,6 +295,25 @@ this catalog's shape (FMCG SKUs, fixed pricing), it could cut a real
 chunk of Phase 5's custom "parse what the customer wants" scope — check
 this before writing a bespoke conversation-state machine.
 
+**The 24-hour customer service window, built for, 2026-09-16.** Meta
+only allows free-form text replies within 24 hours of the customer's
+last inbound message; anything sent after that must be a pre-approved
+**message template**, submitted to Meta for review in advance, or the
+real API rejects it outright. This is easy to miss building against a
+test client, since nothing in this codebase's own tests exercises real
+wall-clock delay — it was found by researching actual deployment/cost
+questions, not by a test failing. `reconciler/whatsapp.py`'s
+`is_within_customer_service_window()` judges this against the
+underlying order's `placed_at`, the only record this system keeps of
+"when did this customer last write in"; `_notify_customers_of_payment()`
+in `app.py` is the one place today where enough wall-clock time can
+plausibly pass to matter (a MoMo payment settling days after the order).
+The template itself (`WHATSAPP_PAYMENT_TEMPLATE_NAME`/`_LANG` env vars)
+must be created and approved in Meta Business Manager before this
+actually works for real — an operational step this code documents but
+can't perform itself, the same category as the Commerce Catalog
+`retailer_id` assumption above and Phase 11's ZRA device registration.
+
 ### Catalog sync — Phase 5b follow-up, built
 
 Phase 5b's native Catalog/Cart checkout (`reconciler/orders.py`'s
