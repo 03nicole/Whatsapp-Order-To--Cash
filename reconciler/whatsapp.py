@@ -25,6 +25,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+# Meta's real, documented rule (sourced 2026-09-16, not guessed): a
+# business can send free-form text only within 24 hours of the
+# customer's last inbound message ("the customer service window").
+# Anything sent after that MUST be a pre-approved message template, or
+# the real Cloud API rejects it outright - this project's original
+# free-text-only send_text() would silently fail for a message like the
+# payment-received confirmation, which can easily fire days after the
+# customer last wrote in.
+CUSTOMER_SERVICE_WINDOW = timedelta(hours=24)
 
 
 @dataclass
@@ -143,6 +154,14 @@ class WhatsAppClient:
     def send_text(self, to_phone: str, message: str) -> None:
         raise NotImplementedError
 
+    def send_template(self, to_phone: str, template_name: str, language_code: str,
+                       parameters: list[str]) -> None:
+        """A pre-approved message template, required for anything sent
+        outside the 24-hour customer service window - see
+        CUSTOMER_SERVICE_WINDOW above. `parameters` fill the template's
+        body placeholders ({{1}}, {{2}}, ...) in order."""
+        raise NotImplementedError
+
 
 class LoggingWhatsAppClient(WhatsAppClient):
     """Default client: records every message that would have been sent
@@ -151,9 +170,14 @@ class LoggingWhatsAppClient(WhatsAppClient):
 
     def __init__(self):
         self.sent: list[tuple[str, str]] = []
+        self.sent_templates: list[tuple[str, str, str, list[str]]] = []
 
     def send_text(self, to_phone: str, message: str) -> None:
         self.sent.append((to_phone, message))
+
+    def send_template(self, to_phone: str, template_name: str, language_code: str,
+                       parameters: list[str]) -> None:
+        self.sent_templates.append((to_phone, template_name, language_code, parameters))
 
 
 class MetaCloudAPIClient(WhatsAppClient):
@@ -181,6 +205,57 @@ class MetaCloudAPIClient(WhatsAppClient):
             },
             timeout=10,
         )
+
+    def send_template(self, to_phone: str, template_name: str, language_code: str,
+                       parameters: list[str]) -> None:
+        """Real payload shape (sourced 2026-09-16 - Meta's own docs
+        weren't fetchable, confirmed instead against AWS End User
+        Messaging Social's docs and multiple BSPs converging on the same
+        structure): messaging_product/to/type as usual, but `template`
+        carries name + language + a body component whose parameters fill
+        the template's {{1}}, {{2}}, ... placeholders in order. The
+        template itself must already exist and be approved in Meta
+        Business Manager with a matching placeholder count - this client
+        can't create or verify one, same operational-setup-step category
+        as Phase 5b's Meta Commerce Catalog retailer_id assumption."""
+        import requests
+        requests.post(
+            f"{self.BASE_URL}/{self.phone_number_id}/messages",
+            headers={"Authorization": f"Bearer {self.access_token}"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": to_phone,
+                "type": "template",
+                "template": {
+                    "name": template_name,
+                    "language": {"code": language_code},
+                    "components": [{
+                        "type": "body",
+                        "parameters": [{"type": "text", "text": p} for p in parameters],
+                    }],
+                },
+            },
+            timeout=10,
+        )
+
+
+def is_within_customer_service_window(last_customer_contact: str | None,
+                                       now: datetime | None = None) -> bool:
+    """True only if `last_customer_contact` (an ISO timestamp - an
+    order's placed_at, today's only record of "when did this customer
+    last write in") is both present and within the last 24 hours.
+    Unknown last-contact (a manually-uploaded invoice, with no order and
+    so no record of the customer ever messaging in) fails CLOSED to
+    False - never assumes a fresh conversation it has no evidence for,
+    the same "never guess" invariant as everywhere else in this
+    project."""
+    if not last_customer_contact:
+        return False
+    now = now or datetime.now(timezone.utc)
+    contact_at = datetime.fromisoformat(last_customer_contact)
+    if contact_at.tzinfo is None:
+        contact_at = contact_at.replace(tzinfo=timezone.utc)
+    return (now - contact_at) < CUSTOMER_SERVICE_WINDOW
 
 
 def get_client() -> WhatsAppClient:

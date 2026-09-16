@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
 from reconciler.whatsapp import (
-    LoggingWhatsAppClient, get_client, parse_order_messages, parse_webhook_payload,
-    verify_webhook_subscription,
+    LoggingWhatsAppClient, get_client, is_within_customer_service_window,
+    parse_order_messages, parse_webhook_payload, verify_webhook_subscription,
 )
 
 
@@ -95,6 +97,56 @@ def test_get_client_uses_real_client_when_credentials_configured(monkeypatch):
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
     from reconciler.whatsapp import MetaCloudAPIClient
     assert isinstance(get_client(), MetaCloudAPIClient)
+
+
+def test_logging_client_records_sent_templates():
+    client = LoggingWhatsAppClient()
+    client.send_template("260977111111", "payment_received", "en_US", ["INV-1", "K1,200.00"])
+    assert client.sent_templates == [
+        ("260977111111", "payment_received", "en_US", ["INV-1", "K1,200.00"]),
+    ]
+
+
+# --- is_within_customer_service_window --------------------------------------
+
+def test_window_true_for_a_message_just_now():
+    now = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+    last_contact = now.isoformat()
+    assert is_within_customer_service_window(last_contact, now=now) is True
+
+
+def test_window_true_at_23_hours_59_minutes():
+    now = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+    last_contact = (now - timedelta(hours=23, minutes=59)).isoformat()
+    assert is_within_customer_service_window(last_contact, now=now) is True
+
+
+def test_window_false_at_exactly_24_hours():
+    now = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+    last_contact = (now - timedelta(hours=24)).isoformat()
+    assert is_within_customer_service_window(last_contact, now=now) is False
+
+
+def test_window_false_a_few_days_later():
+    now = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+    last_contact = (now - timedelta(days=3)).isoformat()
+    assert is_within_customer_service_window(last_contact, now=now) is False
+
+
+def test_window_false_when_last_contact_is_unknown():
+    """No order behind this invoice - no evidence of a fresh
+    conversation, so this must never guess "within the window"."""
+    assert is_within_customer_service_window(None) is False
+
+
+def test_window_handles_a_naive_timestamp_as_utc():
+    """orders.placed_at is always tz-aware in practice (isoformat() from
+    a tz-aware datetime), but the check shouldn't crash on a naive one -
+    treats it as UTC rather than raising a tz-aware/naive comparison
+    error."""
+    now = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+    naive_last_contact = "2026-09-16T11:00:00"  # 1 hour ago, no tzinfo
+    assert is_within_customer_service_window(naive_last_contact, now=now) is True
 
 
 # --- parse_order_messages (native Catalog/Cart checkout) -------------------

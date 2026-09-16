@@ -42,6 +42,16 @@ UPLOAD_DIR = Path(tempfile.gettempdir()) / "reconciliation-engine-uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+# Used only outside the 24-hour customer service window (see
+# reconciler/whatsapp.py's is_within_customer_service_window()) - this
+# exact template must already exist, be approved in Meta Business
+# Manager, and take exactly 2 body placeholders ({{1}} invoice id,
+# {{2}} amount) in that order, or the real API will reject it. Nothing
+# in this codebase can create or verify that template - same
+# operational-setup-step category as Phase 5b's Commerce Catalog
+# retailer_id assumption and Phase 11's ZRA device registration.
+WHATSAPP_PAYMENT_TEMPLATE_NAME = os.environ.get("WHATSAPP_PAYMENT_TEMPLATE_NAME", "payment_received")
+WHATSAPP_PAYMENT_TEMPLATE_LANG = os.environ.get("WHATSAPP_PAYMENT_TEMPLATE_LANG", "en_US")
 FLUTTERWAVE_SECRET_HASH = os.environ.get("FLUTTERWAVE_SECRET_HASH", "")
 # Signs the catalog feed URL below (see catalog_feed_token()). Unset in the
 # common local/dev case - falls back to the process's own random
@@ -651,7 +661,8 @@ def whatsapp_webhook_receive():
     return "", 200
 
 
-def _notify_customers_of_payment(results: dict, client: whatsapp.WhatsAppClient) -> None:
+def _notify_customers_of_payment(conn: sqlite3.Connection, business: str, results: dict,
+                                  client: whatsapp.WhatsAppClient) -> None:
     """The other half of _finalize_order()'s "Pay via MoMo and we'll
     confirm once it's received" promise - Phase 10 matched a live
     payment to its invoice but never actually told the customer who was
@@ -660,7 +671,17 @@ def _notify_customers_of_payment(results: dict, client: whatsapp.WhatsAppClient)
     telling that customer "settled" would be wrong. Only for invoices
     with a phone on file - a manually-uploaded invoice from a bulk
     statement import may not have one, and that's fine, it just doesn't
-    get a text."""
+    get a text.
+
+    Chooses free text vs. a template message based on WhatsApp's real
+    24-hour customer service window (see
+    reconciler/whatsapp.py's is_within_customer_service_window()) - a
+    payment can easily settle days after the customer last wrote in, and
+    free text silently fails against the real API outside that window.
+    The window is judged against the underlying order's placed_at (the
+    only record this system has of "when did this customer last
+    message in") - a manually-uploaded invoice has no order at all, so
+    it fails closed to "outside the window" rather than guessing fresh."""
     if results["matched"].empty:
         return
     all_invoices = results["all_invoices"].set_index("invoice_id")
@@ -671,10 +692,19 @@ def _notify_customers_of_payment(results: dict, client: whatsapp.WhatsAppClient)
         phone = all_invoices.loc[invoice_id, "customer_phone"]
         if not phone or pd.isna(phone):
             continue
-        client.send_text(
-            phone,
-            f"Payment received - invoice {invoice_id} (K{row['amount']:,.2f}) is now settled. Thanks for your order!",
-        )
+        amount_str = f"{row['amount']:,.2f}"
+        detail = db.get_invoice_detail(conn, business, invoice_id)
+        placed_at = detail["placed_at"] if detail else None
+        if whatsapp.is_within_customer_service_window(placed_at):
+            client.send_text(
+                phone,
+                f"Payment received - invoice {invoice_id} (K{amount_str}) is now settled. Thanks for your order!",
+            )
+        else:
+            client.send_template(
+                phone, WHATSAPP_PAYMENT_TEMPLATE_NAME, WHATSAPP_PAYMENT_TEMPLATE_LANG,
+                [invoice_id, amount_str],
+            )
 
 
 @app.route("/momo/webhook", methods=["POST"])
@@ -706,7 +736,7 @@ def momo_webhook_receive():
     if not momo_df.empty:
         results = reconcile(invoices, momo_df)
         db.save_run(conn, results, business)
-        _notify_customers_of_payment(results, whatsapp.get_client())
+        _notify_customers_of_payment(conn, business, results, whatsapp.get_client())
     conn.close()
 
     return "", 200
